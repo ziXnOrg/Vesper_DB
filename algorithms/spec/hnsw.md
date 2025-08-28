@@ -32,3 +32,15 @@ Output: top-k ids
 - Low efSearch reduces recall
 - High M increases memory footprint and build time
 
+
+## Preconditions / Postconditions
+- Preconditions: `M ≥ 4`, `efConstruction ≥ M`, memory budget sufficient for degree·N
+- Postconditions: graph out-degree ≤ M (except entry layer), connectivity maintained
+
+## Edge cases & fallbacks
+- Disconnected components during build → connect via additional long edges
+- Very small filter masks → stop expanding neighbors failing F early
+
+## References
+- docs/blueprint.md §5.2 HNSW
+

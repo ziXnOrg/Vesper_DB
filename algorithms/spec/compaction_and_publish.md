@@ -23,3 +23,14 @@ Output: new segment S'
 - Power loss mid-publish → safe due to staging + atomic rename
 - Corrupted WAL frame → ignored due to checksum; recovery continues
 
+
+## Preconditions / Postconditions
+- Preconditions: all staged files written and fsynced
+- Postconditions: publish via atomic rename; parent dir fsynced
+
+## Edge cases & fallbacks
+- Partial publish due to crash → on startup, ignore temp paths and keep last atomically published snapshot
+
+## References
+- docs/blueprint.md §6.3 Snapshots & Compaction
+

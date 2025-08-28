@@ -19,3 +19,15 @@ Output: bitmap mask F
 - High-cardinality terms inflate memory
 - Degenerate filters (tiny masks) → switch to brute-force path
 
+
+## Preconditions / Postconditions
+- Preconditions: bitmap indexes built per field; dictionary encoding for high-cardinality strings
+- Postconditions: `F` size matches segment cardinality; AND sequence is associative/commutative
+
+## Edge cases & fallbacks
+- Empty result mask → planner short-circuits search
+- Very large enumerations → switch to range encoding or tiered bitmaps
+
+## References
+- docs/blueprint.md §7 Filtering
+

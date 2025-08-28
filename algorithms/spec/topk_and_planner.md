@@ -27,3 +27,15 @@ return quickselect_k(C, k)
 - Misselection of path → perf/recall regression; log planner decisions
 - Merge bias across segments → ensure deterministic tie‑breakers
 
+
+## Preconditions / Postconditions
+- Preconditions: segments have consistent ids and filter bitmap lengths
+- Postconditions: merged top‑k is globally ordered; deterministic tie‑breaking
+
+## Edge cases & fallbacks
+- k > candidates → return all candidates
+- Time budget exceeded → early stop with partial but valid results
+
+## References
+- docs/blueprint.md §11 Planner
+

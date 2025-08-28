@@ -41,3 +41,15 @@ return s
 - ULP drift vs SIMD; enforce tolerances in tests
 - Misaligned buffers → performance cliffs
 
+
+## Preconditions / Postconditions
+- Preconditions: aligned buffers; lengths divisible by unroll factors or tail handled
+- Postconditions: scalar reference matches SIMD within ULP bounds (see tolerances.md)
+
+## Edge cases & fallbacks
+- Non-finite inputs → return error_code::precondition_failed
+- Mixed alignment → use safe scalar path
+
+## References
+- docs/blueprint.md §8 Distance, §9 SIMD
+

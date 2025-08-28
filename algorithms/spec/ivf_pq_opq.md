@@ -42,3 +42,23 @@ Output: top-k ids
 - Poor training (unbalanced lists) → degraded recall/latency
 - Mismatch between OPQ rotation and codebooks → quality loss
 
+
+## Preconditions / Postconditions
+- Preconditions:
+  - `nlist ≥ 1`, `m · (d/m) == d`, `nbits ∈ {4,5,6,7,8}`
+  - Training set size `N_train ≥ 10·nlist` recommended to avoid empty cells
+  - Vectors finite (no NaN/Inf); if cosine, inputs L2‑normalized
+- Postconditions:
+  - Each vector assigned to exactly one coarse list (A[i] ∈ [0..nlist-1])
+  - PQ codes `U[i]` have length `m` with entries in `[0..2^nbits-1]`
+  - If OPQ enabled, rotation `R` is orthonormal within tolerance
+
+## Edge cases & fallbacks
+- Empty or tiny lists after training → merge lists or reduce `nlist`
+- Pathological OPQ (ill‑conditioned `R`) → disable OPQ for that training run
+- `nprobe` > non‑empty lists → cap to number of non‑empty lists
+- Very small `F` (filter mask) → planner should choose brute‑force rerank
+
+## References
+- docs/blueprint.md §5.1 IVF‑PQ/OPQ, §8 Distance, §11 Planner
+

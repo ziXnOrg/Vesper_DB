@@ -34,3 +34,15 @@ Output: top-k ids
 - Poor locality → excessive random reads
 - Cache too small → latency cliffs
 
+
+## Preconditions / Postconditions
+- Preconditions: SSD with sufficient IOPS; cache size configured
+- Postconditions: adjacency lists persisted sorted by id; cache warms deterministically
+
+## Edge cases & fallbacks
+- Excessive random reads → reorder fetch plan; increase beam or cache
+- Filter skipping causes beam starvation → inject unfiltered pivots periodically
+
+## References
+- docs/blueprint.md §5.3 Disk‑graph
+
