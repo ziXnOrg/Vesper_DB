@@ -13,10 +13,13 @@ elseif (MSVC)
   target_compile_options(vesper_headers INTERFACE /W4)
 endif()
 
-# Dummy translation unit to force header checks in CI (will be replaced later)
+# Library (stub) to prove linkage in CI
+add_library(vesper_stub STATIC src/collection_stub.cpp)
+target_link_libraries(vesper_stub PRIVATE vesper_headers)
+
+# Dummy translation unit to force header checks in CI
 add_executable(vesper_headers_check scripts/headers_check.cpp)
 target_link_libraries(vesper_headers_check PRIVATE vesper_headers)
-
 # ----------------------
 # Tests (Phase 4 scaffolding)
 # ----------------------
