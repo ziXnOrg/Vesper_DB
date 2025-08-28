@@ -34,7 +34,8 @@ We use a deterministic, tests‑first, prompt‑first workflow. All prompt‑gen
 - Reviewers may request micro‑benchmarks for hot paths; add evidence.
 
 ## Security disclosure
-- Please report vulnerabilities privately to: security@example.com (placeholder; update before first release).
+- Please report vulnerabilities privately to: colin@teraflux.app
+- See SECURITY.md for scope, timelines, and handling.
 
 ## Licensing and CLA/DCO
 - License is TBD; if a CLA/DCO is required, link and instructions will be added prior to first release.

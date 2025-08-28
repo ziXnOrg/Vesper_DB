@@ -66,5 +66,5 @@ This guide sets enforceable, modern C++20 standards for Vesper. Use MUST/SHOULD/
 - Local run: `clang-format -i` and `clang-tidy` per `docs/SETUP.md`.
 
 ## Rationale and references
-- C++ Core Guidelines; Boost doc quality bar; internal SLOs and safety constraints (see `prompt-blueprint.md`, `prompt-dev-roadmap.md`).
+- C++ Core Guidelines; Boost doc quality bar; internal SLOs and safety constraints (see `blueprint.md` as project source of truth, plus `prompt-dev-roadmap.md` for sequencing and `prompt-blueprint.md` for methodology).
 

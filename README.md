@@ -18,6 +18,8 @@ Vesper is a single‑library, embeddable vector search engine for on‑device an
 ## Quick start
 See docs/SETUP.md for prerequisites, build instructions, and how to run tests and micro‑benchmarks.
 
+Phase 0 schemas and examples live under `experiments/` (see `experiments/VALIDATION.md`).
+
 ## Architecture overview
 High‑level design, data model, and performance targets are specified in blueprint.md. Start here for a deep technical tour and diagrams.
 - Technical Blueprint: ./blueprint.md
@@ -35,12 +37,13 @@ For full details, see blueprint.md and benchmark-plan.md.
 - See threat-model.md for assets, adversaries, controls, and validation
 
 ## Roadmap and development process
-- Authoritative Prompt Blueprint (prompts, evals, safety): ./prompt-blueprint.md
+- Project source of truth: ./blueprint.md
+- Prompt Blueprint (methodology reference for prompts/evals/safety): ./prompt-blueprint.md
 - Execution plan (phases, gates, milestones): ./prompt-dev-roadmap.md
 
 ## Contributing
 We use a deterministic, tests‑first, prompt‑first workflow (temperature=0.0, top_p=1.0, fixed seed). Please read CONTRIBUTING.md for branching/PR flow, local checks, and schema/CI gates.
 
 ## License
-TBD — choose and update before first release.
+Apache License 2.0 — see LICENSE for details.
 
