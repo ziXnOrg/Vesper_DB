@@ -50,5 +50,6 @@ Vesper follows a tests‑first workflow with deterministic seeds and reproducibl
 - `blueprint.md` (project source of truth)
 - `prompt-dev-roadmap.md` (execution plan)
 - `prompt-blueprint.md` (methodology reference)
+- `experiments/VALIDATION.md` (schema validation)
 - `benchmark-plan.md`, `threat-model.md`.
 

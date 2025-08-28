@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vesper.dev/schema/eval.report.v1.json",
+  "title": "Vesper Eval Report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "run_id",
+    "model",
+    "datasets",
+    "metrics",
+    "gates",
+    "results",
+    "started_at",
+    "finished_at"
+  ],
+  "properties": {
+    "run_id": { "type": "string" },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "family", "hash"],
+      "properties": {
+        "name": { "type": "string" },
+        "family": { "type": "string", "enum": ["openai", "anthropic", "gemini", "llama", "other"] },
+        "hash": { "type": "string" }
+      }
+    },
+    "datasets": { "type": "array", "items": { "type": "string" } },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": { "type": "number" }
+    },
+    "gates": {
+      "type": "object",
+      "additionalProperties": { "type": "number" }
+    },
+    "results": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["passed"],
+      "properties": { "passed": { "type": "boolean" } },
+      "$comment": "Note: Logical invariant (metrics >= gates => passed) must be checked in CI tooling."
+    },
+    "started_at": { "type": "string", "format": "date-time" },
+    "finished_at": { "type": "string", "format": "date-time" },
+    "robustness": { "type": "object", "additionalProperties": true },
+    "baseline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_id"],
+      "properties": { "run_id": { "type": "string" } }
+    },
+    "artifacts": { "type": "array", "items": { "type": "string" } }
+  }
+}
+
