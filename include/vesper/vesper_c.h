@@ -8,7 +8,9 @@ extern "C" {
 #include <stdint.h>
 #include <stddef.h>
 
-// Versioning
+// Versioning and stability
+// - VESPER_C_ABI_VERSION increments on incompatible changes.
+// - All structs are POD with explicit sizes; callers manage memory.
 #define VESPER_C_ABI_VERSION 1
 
 // Error codes (subset of C++ error_code)
@@ -26,10 +28,12 @@ typedef enum {
 } vesper_status_t;
 
 // Opaque handles
+// - Ownership: returned pointers belong to the caller; use close() to release.
 typedef struct vesper_collection_t_ vesper_collection_t;
 
+// Search params and results are caller-owned POD structures.
 typedef struct {
-  const char* metric; // "l2" | "ip" | "cosine"
+  const char* metric; // "l2" | "ip" | "cosine"; pointer must remain valid during call
   uint32_t k;
   float target_recall;
   uint32_t nprobe;
@@ -41,6 +45,13 @@ typedef struct {
   uint64_t id;
   float score;
 } vesper_search_result_t;
+
+// API ownership & lifetime rules
+// - All input buffers (e.g., vectors, query) are borrowed and must remain valid
+//   for the duration of the call.
+// - Output arrays are provided by the caller (out/out_cap); the function writes up to out_cap
+//   results and sets out_size. If out_cap is insufficient, return VESPER_E_PRECONDITION_FAILED.
+// - Functions are thread-safe for reads; mutating functions require a single writer per collection.
 
 // API
 vesper_status_t vesper_open_collection(const char* path, vesper_collection_t** out);

@@ -45,8 +45,8 @@ jobs:
       - name: Enforce blueprint reference in spec_refs
         run: |
           jq -e '
-            (.spec_refs // []) 
-            | map( . | tostring ) 
+            (.spec_refs // [])
+            | map( . | tostring )
             | any( . == "docs/blueprint.md" or test("(^|/)blueprint\\.md$") )
           ' experiments/examples/prompt.manifest.json > /dev/null || {
             echo "spec_refs must include docs/blueprint.md (or a path ending in blueprint.md)";
@@ -72,6 +72,20 @@ jobs:
     name: Basic repo checks
     runs-on: ubuntu-latest
     steps:
+
+  headers-build:
+    name: Header-only build check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Configure
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: |
+          cmake --build build -j
+
       - name: Checkout
         uses: actions/checkout@v4
 
