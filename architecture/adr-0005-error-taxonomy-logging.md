@@ -32,6 +32,11 @@ enum class error_code : uint32_t {
 ## Logging policy
 - TRACE: perf counters, kernel iterations (disabled by default)
 - DEBUG: detailed planner/storage traces under sampling
+
+## Traceability to blueprint.md
+- §15 Observability & Tooling → structured logs, counters, histograms
+- §16 Testing & Verification → error handling in tests and gates
+
 - INFO: lifecycle events (open, seal, snapshot publish)
 - WARN: transient issues with retries/backoff
 - ERROR: non-recoverable failures; include remediation hints

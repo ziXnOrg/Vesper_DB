@@ -14,6 +14,12 @@ Implement an append-only WAL with checksummed frames and explicit commits; immut
 - Recovery scans WAL verifying checksums, replays idempotently
 - Segment compaction is staged then atomically published
 
+
+## Traceability to blueprint.md
+- §6.1 Files & Layout → directory structure
+- §6.2 WAL Format → framing, checksums, fsync policy
+- §6.3 Snapshots & Compaction → publish semantics and staging
+
 ## References
 - `docs/blueprint.md#6-storage-engine-persistence-crash-safety`
 

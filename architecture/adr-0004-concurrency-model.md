@@ -14,6 +14,11 @@ Use RCU-style epoch pinning for readers of immutable structures; single-writer p
 - Safe reclamation avoids ABA/UAF issues
 - Predictable contention profile
 
+
+## Traceability to blueprint.md
+- §12 Concurrency & Correctness → readers/writers, reclamation
+- §9 SIMD, Caches & NUMA → pmr arenas and alignment implications
+
 ## References
 - `docs/blueprint.md#12-concurrency-correctness`
 

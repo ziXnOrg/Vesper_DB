@@ -14,6 +14,12 @@ Adopt the single-process embeddable library architecture with three pluggable in
 - Deterministic crash recovery via WAL checksums + atomic snapshot publish
 - Portable C++20 codebase with SIMD feature gating and scalar fallbacks
 
+
+## Traceability to blueprint.md
+- §4 High‑Level Architecture → overall component layout
+- §5 Index Families → rationale for three families
+- §6 Storage Engine → WAL/snapshots decisions
+
 ## References
 - `docs/blueprint.md`
 - `docs/prompt-dev-roadmap.md`
