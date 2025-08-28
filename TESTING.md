@@ -47,5 +47,8 @@ Vesper follows a tests‑first workflow with deterministic seeds and reproducibl
 - The CI pipeline (added in Phase 0) will block merges on failing tests/evals.
 
 ## References
-- `prompt-blueprint.md`, `prompt-dev-roadmap.md`, `benchmark-plan.md`, `threat-model.md`.
+- `blueprint.md` (project source of truth)
+- `prompt-dev-roadmap.md` (execution plan)
+- `prompt-blueprint.md` (methodology reference)
+- `benchmark-plan.md`, `threat-model.md`.
 

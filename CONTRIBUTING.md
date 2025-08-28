@@ -12,11 +12,12 @@ We use a deterministic, tests‑first, prompt‑first workflow. All prompt‑gen
 - Short, imperative subject (≤ 72 chars), optional scope: `core: fix wal checksum on rollover`.
 - Body includes rationale and links to issues/backlog.
 
-## Deterministic prompt workflow (authoritative)
+## Deterministic prompt workflow
 - Decoding must be fixed: `temperature=0.0`, `top_p=1.0`, fixed `seed`, `n=1`.
 - Attach to the PR: the exact prompt(s), decoding params, and model/version hash.
 - Output must conform to requested schemas (no extra prose). Use stop sequences as needed.
-- See `prompt-blueprint.md` and `prompt-dev-roadmap.md` for eval gates and sequencing.
+- Project source of truth: `blueprint.md`; treat `prompt-blueprint.md` as methodology guidance.
+- See `prompt-dev-roadmap.md` for sequencing and `prompt-blueprint.md` for eval/safety practices.
 
 ## Schema and CI gates
 - Schemas (to be added in Phase 0) must validate.

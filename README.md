@@ -35,7 +35,8 @@ For full details, see blueprint.md and benchmark-plan.md.
 - See threat-model.md for assets, adversaries, controls, and validation
 
 ## Roadmap and development process
-- Authoritative Prompt Blueprint (prompts, evals, safety): ./prompt-blueprint.md
+- Project source of truth: ./blueprint.md
+- Prompt Blueprint (methodology reference for prompts/evals/safety): ./prompt-blueprint.md
 - Execution plan (phases, gates, milestones): ./prompt-dev-roadmap.md
 
 ## Contributing
