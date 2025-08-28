@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vesper.dev/examples/eval.report.v1.json",
+  "run_id": "vesper-prompts-v1.0.0",
+  "model": { "name": "gpt-5-pro", "family": "openai", "hash": "sha256:0123abcd" },
+  "datasets": ["helm:mmlu", "promptbench:adv_suite_v1"],
+  "metrics": { "accuracy": 0.76, "robustness@adv": 0.65, "latency_p50": 1.2 },
+  "gates": { "accuracy": 0.74, "robustness@adv": 0.62 },
+  "results": { "passed": true },
+  "started_at": "2025-08-28T12:00:00Z",
+  "finished_at": "2025-08-28T12:10:00Z",
+  "robustness": { "notes": "All attacks within tolerance." },
+  "baseline": { "run_id": "vesper-prompts-v0.9.0" },
+  "artifacts": ["file://runs/vesper-prompts-v1.0.0/report.json"]
+}
+

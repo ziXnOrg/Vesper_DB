@@ -18,6 +18,8 @@ Vesper is a single‑library, embeddable vector search engine for on‑device an
 ## Quick start
 See docs/SETUP.md for prerequisites, build instructions, and how to run tests and micro‑benchmarks.
 
+Phase 0 schemas and examples live under `experiments/` (see `experiments/VALIDATION.md`).
+
 ## Architecture overview
 High‑level design, data model, and performance targets are specified in blueprint.md. Start here for a deep technical tour and diagrams.
 - Technical Blueprint: ./blueprint.md
