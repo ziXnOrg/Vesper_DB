@@ -43,5 +43,5 @@ For full details, see blueprint.md and benchmark-plan.md.
 We use a deterministic, tests‑first, prompt‑first workflow (temperature=0.0, top_p=1.0, fixed seed). Please read CONTRIBUTING.md for branching/PR flow, local checks, and schema/CI gates.
 
 ## License
-TBD — choose and update before first release.
+Apache License 2.0 — see LICENSE for details.
 
