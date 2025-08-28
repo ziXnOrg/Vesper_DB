@@ -86,6 +86,10 @@ jobs:
         run: |
           cmake --build build -j
 
+      - name: Build headers check
+        run: |
+          cmake --build build -j --target vesper_headers_check
+
       - name: Checkout
         uses: actions/checkout@v4
 

@@ -6,10 +6,10 @@ add_library(vesper_headers INTERFACE)
 target_include_directories(vesper_headers INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 if (CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR CMAKE_CXX_COMPILER_ID MATCHES "GNU")
-  target_compile_features(vesper_headers INTERFACE cxx_std_20)
+  target_compile_features(vesper_headers INTERFACE cxx_std_23)
   target_compile_options(vesper_headers INTERFACE -Wall -Wextra -Wpedantic)
 elseif (MSVC)
-  target_compile_features(vesper_headers INTERFACE cxx_std_20)
+  target_compile_features(vesper_headers INTERFACE cxx_std_23)
   target_compile_options(vesper_headers INTERFACE /W4)
 endif()
 

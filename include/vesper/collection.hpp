@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "vesper/error.hpp"
+#include "vesper/segment.hpp"
 
 namespace vesper {
 
@@ -95,6 +96,9 @@ public:
   auto snapshot() -> std::expected<void, core::error>;
   /** \brief Recover by loading snapshot and replaying WAL. */
   auto recover() -> std::expected<void, core::error>;
+
+  /** \brief Enumerate segments (mutable + sealed). */
+  auto list_segments() const -> std::expected<std::vector<segment_info>, core::error>;
 };
 
 } // namespace vesper
