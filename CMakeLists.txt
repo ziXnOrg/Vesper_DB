@@ -18,7 +18,7 @@ add_library(vesper_core STATIC src/inmemory_collection.cpp src/filter_eval.cpp)
 target_link_libraries(vesper_core PRIVATE vesper_headers)
 
 # WAL library
-add_library(vesper_wal STATIC src/wal/frame.cpp)
+add_library(vesper_wal STATIC src/wal/frame.cpp src/wal/io.cpp src/wal/manifest.cpp)
 target_link_libraries(vesper_wal PRIVATE vesper_headers)
 
 # Dummy translation unit to force header checks in CI
@@ -44,7 +44,7 @@ if (VESPER_ENABLE_TESTS)
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/*.cpp)
 
   add_executable(vesper_tests ${TEST_SOURCES})
-  target_link_libraries(vesper_tests PRIVATE Catch2::Catch2WithMain vesper_headers)
+  target_link_libraries(vesper_tests PRIVATE Catch2::Catch2WithMain vesper_headers vesper_core vesper_wal)
   if (CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR CMAKE_CXX_COMPILER_ID MATCHES "GNU")
     target_compile_features(vesper_tests PRIVATE cxx_std_23)
     target_compile_options(vesper_tests PRIVATE -Wall -Wextra -Wpedantic)
