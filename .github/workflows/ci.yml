@@ -90,6 +90,20 @@ jobs:
         run: |
           cmake --build build -j --target vesper_headers_check
 
+
+  tests:
+    name: Build and run tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Configure (tests)
+        run: cmake -S . -B build -DVESPER_ENABLE_TESTS=ON -DCMAKE_BUILD_TYPE=Release
+      - name: Build (tests)
+        run: cmake --build build -j --target vesper_tests
+      - name: Run ctest
+        run: ctest --test-dir build --output-on-failure
+
       - name: Checkout
         uses: actions/checkout@v4
 
