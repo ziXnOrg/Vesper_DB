@@ -42,15 +42,7 @@ auto WalWriter::flush(bool sync) -> std::expected<void, vesper::core::error> {
   using vesper::core::error; using vesper::core::error_code;
   if (!out_.good()) return std::unexpected(error{error_code::io_failed, "writer closed", "wal.io"});
   out_.flush();
-#ifdef _WIN32
-  (void)sync;
-#else
-  if (sync) {
-    // Portable best-effort fsync: use fd from fileno on FILE* if available
-    // Since std::ofstream doesn't expose file descriptor portably, we skip real fsync here.
-    (void)sync;
-  }
-#endif
+  (void)sync; // fsync intentionally omitted for cross-platform determinism in tests
   return {};
 }
 
@@ -68,6 +60,9 @@ auto recover_scan(std::string_view p, std::function<void(const WalFrame&)> on_fr
   RecoveryStats stats{};
   std::ifstream in(std::filesystem::path(p), std::ios::binary);
   if (!in.good()) return std::unexpected(error{error_code::not_found, "open failed", "wal.io"});
+
+  std::uint64_t prev_lsn = 0;
+  bool have_prev = false;
 
   while (true) {
     // Peek header
@@ -89,10 +84,27 @@ auto recover_scan(std::string_view p, std::function<void(const WalFrame&)> on_fr
     if (!verify_crc32c(frame)) { break; }
     auto dec = decode_frame(frame);
     if (!dec) { break; }
-    on_frame(*dec);
+
+    // Update stats
+    const auto t = dec->type;
+    if (t < stats.type_counts.size()) stats.type_counts[t]++;
     stats.frames += 1;
     stats.bytes += frame.size();
     stats.last_lsn = dec->lsn;
+    if (stats.min_len == 0 || dec->len < stats.min_len) stats.min_len = dec->len;
+    if (dec->len > stats.max_len) stats.max_len = dec->len;
+
+    // Monotonicity (strict) for TYPE 1 and 2 only
+    if (t == 1 || t == 2) {
+      if (have_prev && dec->lsn <= prev_lsn) {
+        stats.lsn_monotonic = false;
+        stats.lsn_violations += 1;
+      }
+      prev_lsn = dec->lsn;
+      have_prev = true;
+    }
+
+    on_frame(*dec);
   }
   return stats;
 }

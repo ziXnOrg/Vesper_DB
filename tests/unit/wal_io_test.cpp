@@ -63,3 +63,28 @@ TEST_CASE("WAL torn tail is ignored", "[wal][io]") {
   fs::remove(tmp, ec);
 }
 
+
+
+TEST_CASE("WAL LSN monotonicity warn-only and stats", "[wal][io][stats]") {
+  namespace fs = std::filesystem;
+  auto tmp = fs::temp_directory_path() / "vesper_wal_lsn.bin";
+  std::error_code ec; fs::remove(tmp, ec);
+  auto w = wal::WalWriter::open(tmp.string());
+  REQUIRE(w.has_value());
+  std::vector<std::uint8_t> p{0x01};
+  REQUIRE(w->append(10, 1, p).has_value());
+  REQUIRE(w->append(8, 1, p).has_value()); // violation: 8 < 10
+  REQUIRE(w->flush(false).has_value());
+  std::size_t total_payload = 0;
+  auto stats_exp = wal::recover_scan(tmp.string(), [&](const wal::WalFrame& f){ total_payload += f.payload.size(); });
+  REQUIRE(stats_exp.has_value());
+  auto s = *stats_exp;
+  REQUIRE(s.frames == 2);
+  REQUIRE(s.lsn_monotonic == false);
+  REQUIRE(s.lsn_violations == 1);
+  REQUIRE(s.type_counts[1] == 2);
+  REQUIRE(s.min_len <= s.max_len);
+  REQUIRE(s.last_lsn == 8);
+  REQUIRE(total_payload == 2); // 1 byte each
+  fs::remove(tmp, ec);
+}
