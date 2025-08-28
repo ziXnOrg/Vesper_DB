@@ -15,6 +15,13 @@ Provide three index families selectable per collection and even per segment: IVF
 - Billion-scale on SSD (Disk-graph)
 
 ## References
+
+## Traceability to blueprint.md
+- §5.1 IVF‑PQ/OPQ → compact SSD‑friendly
+- §5.2 HNSW → low‑latency RAM hot segments
+- §5.3 Disk‑graph → SSD scale and filtered traversal
+- §7 Filtering → early pruning via Roaring bitmaps
+
 - `docs/blueprint.md#5-index-families-search-algorithms`
 - `docs/blueprint.md#7-filtering-payload-indexing`
 
