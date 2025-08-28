@@ -102,8 +102,8 @@ jobs:
       - name: Build (tests)
         run: cmake --build build -j --target vesper_tests
       - name: Run ctest
-      - name: Build stub lib
-        run: cmake --build build -j --target vesper_stub
+      - name: Build core lib
+        run: cmake --build build -j --target vesper_core
         run: ctest --test-dir build --output-on-failure
 
 
