@@ -51,8 +51,22 @@ if (VESPER_ENABLE_TESTS)
 endif()
 
 # ----------------------
-# Bench placeholders
+# Benchmarks (Google Benchmark)
 # ----------------------
-add_executable(vesper_bench_dummy bench/micro/dummy_bench.cpp)
-target_link_libraries(vesper_bench_dummy PRIVATE vesper_headers)
+option(VESPER_ENABLE_BENCH "Build micro-benchmarks" ON)
+if (VESPER_ENABLE_BENCH)
+  include(FetchContent)
+  set(GBENCH_TAG v1.8.3)
+  FetchContent_Declare(
+    gbench
+    GIT_REPOSITORY https://github.com/google/benchmark.git
+    GIT_TAG        ${GBENCH_TAG}
+  )
+  set(BENCHMARK_ENABLE_GTEST_TESTS OFF CACHE BOOL "" FORCE)
+  set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+  FetchContent_MakeAvailable(gbench)
+
+  add_executable(vesper_bench_dummy bench/micro/dummy_bench.cpp)
+  target_link_libraries(vesper_bench_dummy PRIVATE benchmark::benchmark vesper_headers)
+endif()
 

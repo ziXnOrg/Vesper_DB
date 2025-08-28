@@ -104,6 +104,18 @@ jobs:
       - name: Run ctest
         run: ctest --test-dir build --output-on-failure
 
+
+  bench-build:
+    name: Build micro-benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Configure (bench)
+        run: cmake -S . -B build -DVESPER_ENABLE_BENCH=ON -DCMAKE_BUILD_TYPE=Release
+      - name: Build (bench)
+        run: cmake --build build -j --target vesper_bench_dummy
+
       - name: Checkout
         uses: actions/checkout@v4
 
