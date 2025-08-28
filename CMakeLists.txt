@@ -14,8 +14,12 @@ elseif (MSVC)
 endif()
 
 # Library (minimal in-memory impl) to prove linkage in CI
-add_library(vesper_core STATIC src/inmemory_collection.cpp)
+add_library(vesper_core STATIC src/inmemory_collection.cpp src/filter_eval.cpp)
 target_link_libraries(vesper_core PRIVATE vesper_headers)
+
+# WAL library
+add_library(vesper_wal STATIC src/wal/frame.cpp)
+target_link_libraries(vesper_wal PRIVATE vesper_headers)
 
 # Dummy translation unit to force header checks in CI
 add_executable(vesper_headers_check scripts/headers_check.cpp)

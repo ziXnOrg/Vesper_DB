@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "vesper/collection.hpp"
+#include "vesper/filter_eval.hpp"
 #include "inmemory_index.hpp"
 
 namespace vesper {
@@ -30,7 +31,8 @@ auto collection::insert(std::uint64_t id, const float* vec, std::size_t dim)
     -> std::expected<void, core::error> {
   auto* impl = reinterpret_cast<collection_impl*>(impl_);
   std::vector<float> v(vec, vec + dim);
-  impl->idx->store[id] = std::move(v);
+  detail::doc d{}; d.vec = std::move(v);
+  impl->idx->store[id] = std::move(d);
   return {};
 }
 
@@ -40,15 +42,23 @@ auto collection::remove(std::uint64_t id) -> std::expected<void, core::error> {
   return {};
 }
 
-auto collection::search(const float* q, std::size_t dim, const search_params& p, const filter_expr*)
+auto collection::search(const float* q, std::size_t dim, const search_params& p, const filter_expr* fexpr)
     -> std::expected<std::vector<search_result>, core::error> {
   auto* impl = reinterpret_cast<collection_impl*>(impl_);
   std::vector<float> qv(q, q + dim);
-  std::vector<search_result> out;
-  out.reserve(p.k);
+
+  std::vector<filter_eval::id_view> views; views.reserve(impl->idx->store.size());
   for (auto& kv : impl->idx->store) {
-    float d = detail::inmem_index::l2(qv, kv.second);
-    out.push_back({kv.first, d});
+    views.push_back({kv.first, &kv.second.tags, &kv.second.nums});
+  }
+  std::vector<std::uint64_t> candidates = filter_eval::apply_filter(fexpr, views);
+
+  std::vector<search_result> out; out.reserve(std::min<std::size_t>(p.k, candidates.size()));
+  for (auto id : candidates) {
+    auto it = impl->idx->store.find(id);
+    if (it == impl->idx->store.end()) continue;
+    float d = detail::inmem_index::l2(qv, it->second.vec);
+    out.push_back({id, d});
   }
   std::sort(out.begin(), out.end(), [](auto& a, auto& b){ return a.score < b.score; });
   if (out.size() > p.k) out.resize(p.k);
