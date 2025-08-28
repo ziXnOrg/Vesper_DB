@@ -1,0 +1,75 @@
+# Vesper Repository Skeleton & Contracts
+version: 1.0.0
+updated: 2025-08-28
+owners:
+  org: Ripple Group
+  contacts:
+    - colin@teraflux.app
+
+ci:
+  workflow: .github/workflows/ci.yml
+  gates:
+    - schema_validation: required
+    - basic_checks: required
+  matrix:
+    os: [ubuntu-latest]
+    note: "Windows/macOS to be added when code and tests land"
+
+invariants:
+  - "Deterministic prompts: temperature=0.0, top_p=1.0, n=1, fixed integer seed"
+  - "No network IO by default in library; telemetry opt-in only"
+  - "Public headers live under include/vesper/; C ABI uses POD only"
+  - "SIMD dispatch is feature-gated (AVX2/AVX-512) with scalar fallback"
+  - "Crash-safety: WAL checksums + fsync discipline; atomic snapshot publish"
+
+schemas:
+  prompt_manifest: experiments/schema/prompt.manifest.schema.json
+  eval_report: experiments/schema/eval.report.schema.json
+  experiment: experiments/schema/experiment.schema.json
+  examples:
+    - experiments/examples/prompt.manifest.json
+    - experiments/examples/eval.report.json
+    - experiments/examples/experiment.yaml
+
+prompts:
+  semver: 1.0.0
+  storage:
+    system: prompts/system/
+    tasks: prompts/tasks/
+    tools: prompts/tools/
+    meta: prompts/meta/
+  notes: "Prompt files reference blueprint via spec_refs; checks enforced in CI"
+
+layout:
+  include: include/vesper/        # Public C++ headers (Doxygen-friendly)
+  src: src/                        # Implementation (to be added in Phase 5)
+  tests:
+    unit: tests/unit/              # GoogleTest/Catch2
+    property: tests/property/      # Property tests
+    fuzz: tests/fuzz/              # libFuzzer targets
+  bench:
+    micro: bench/micro/            # Google Benchmark
+  experiments:
+    schema: experiments/schema/
+    examples: experiments/examples/
+  evals: evals/                    # HELM/PromptBench/GAIA runbooks (Phase 7)
+  policies: policies/              # Safety/mitigation docs (Phase 7)
+  versioning: versioning/          # CHANGELOG, migration notes (Phase 0 later)
+  scripts: scripts/                # Utility scripts
+  docs: docs/                      # Documentation (may be gitignored locally)
+  gh: .github/                     # CI workflows, templates
+
+build:
+  system: cmake
+  out_of_source: true
+  options:
+    - VESPER_ENABLE_TESTS (BOOL)
+    - VESPER_ENABLE_BENCH (BOOL)
+    - VESPER_FORCE_SCALAR (BOOL)
+    - VESPER_SIMD_MAX (STRING: AVX2|AVX512)
+
+references:
+  source_of_truth: docs/blueprint.md
+  roadmap: docs/prompt-dev-roadmap.md
+  methodology: docs/prompt-blueprint.md
+
