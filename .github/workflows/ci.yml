@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  schema-validate:
+    name: Validate schemas and examples
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install ajv-cli
+        run: |
+          npm install --location=global ajv-cli@^5
+          ajv --version
+
+      - name: Install yq and jq
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+        shell: bash
+
+      - name: Validate prompt manifest JSON
+        run: |
+          ajv validate \
+            -s experiments/schema/prompt.manifest.schema.json \
+            -d experiments/examples/prompt.manifest.json
+
+      - name: Enforce blueprint reference in spec_refs
+        run: |
+          jq -e '
+            (.spec_refs // []) 
+            | map( . | tostring ) 
+            | any( . == "docs/blueprint.md" or test("(^|/)blueprint\\.md$") )
+          ' experiments/examples/prompt.manifest.json > /dev/null || {
+            echo "spec_refs must include docs/blueprint.md (or a path ending in blueprint.md)";
+            exit 1;
+          }
+
+      - name: Validate eval report JSON
+        run: |
+          ajv validate \
+            -s experiments/schema/eval.report.schema.json \
+            -d experiments/examples/eval.report.json
+
+      - name: Validate experiment YAML via JSON Schema
+        run: |
+          curl -sL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o /usr/local/bin/yq
+          chmod +x /usr/local/bin/yq
+          yq -o=json e experiments/examples/experiment.yaml > /tmp/experiment.json
+          ajv validate \
+            -s experiments/schema/experiment.schema.json \
+            -d /tmp/experiment.json
+
+  basic-checks:
+    name: Basic repo checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify style/config files present
+        run: |
+          test -f .editorconfig
+          test -f .clang-format
+          test -f .clang-tidy
+          echo "Style/config files present."
+
+      - name: Verify experiments directory structure
+        run: |
+          test -f experiments/schema/prompt.manifest.schema.json
+          test -f experiments/schema/eval.report.schema.json
+          test -f experiments/schema/experiment.schema.json
+          test -f experiments/examples/prompt.manifest.json
+          test -f experiments/examples/eval.report.json
+          test -f experiments/examples/experiment.yaml
+          test -f experiments/VALIDATION.md
+          echo "Experiments schemas and examples present."
+
