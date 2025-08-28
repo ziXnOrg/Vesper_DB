@@ -13,9 +13,9 @@ elseif (MSVC)
   target_compile_options(vesper_headers INTERFACE /W4)
 endif()
 
-# Library (stub) to prove linkage in CI
-add_library(vesper_stub STATIC src/collection_stub.cpp)
-target_link_libraries(vesper_stub PRIVATE vesper_headers)
+# Library (minimal in-memory impl) to prove linkage in CI
+add_library(vesper_core STATIC src/inmemory_collection.cpp)
+target_link_libraries(vesper_core PRIVATE vesper_headers)
 
 # Dummy translation unit to force header checks in CI
 add_executable(vesper_headers_check scripts/headers_check.cpp)

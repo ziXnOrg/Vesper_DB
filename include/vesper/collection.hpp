@@ -20,6 +20,7 @@
 #include <expected>
 #include <string>
 #include <vector>
+#include <memory>
 
 #include "vesper/error.hpp"
 #include "vesper/segment.hpp"
@@ -53,6 +54,13 @@ struct filter_expr; // fwd-decl
 /** \brief A collection of vectors and metadata stored on disk. */
 class collection {
 public:
+  collection() = default;
+  ~collection();
+  collection(collection&&) noexcept;
+  collection& operator=(collection&&) noexcept;
+  collection(const collection&) = delete;
+  collection& operator=(const collection&) = delete;
+
   /**
    * \brief Open or create a collection at a filesystem path.
    * \param path Filesystem directory path (UTF-8)
@@ -99,6 +107,9 @@ public:
 
   /** \brief Enumerate segments (mutable + sealed). */
   auto list_segments() const -> std::expected<std::vector<segment_info>, core::error>;
+
+private:
+  void* impl_{nullptr}; // pImpl
 };
 
 } // namespace vesper
