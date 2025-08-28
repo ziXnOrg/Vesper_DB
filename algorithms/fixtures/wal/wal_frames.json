@@ -1,0 +1,9 @@
+{
+  "valid": [
+    {"len": 12, "type": 1, "lsn": 1, "payload_hex": "DEADBEEF", "crc": "0x12345678" }
+  ],
+  "torn": [
+    {"len": 12, "type": 1, "lsn": 2, "payload_hex": "DEADBEEF", "crc": "0xBAD" }
+  ]
+}
+

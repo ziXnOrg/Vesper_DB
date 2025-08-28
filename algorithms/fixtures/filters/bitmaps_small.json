@@ -1,0 +1,12 @@
+{
+  "size": 16,
+  "terms": {
+    "color=red":  [1,0,0,1,0,0,1,0, 0,0,0,1,0,0,0,0],
+    "shape=circle":[0,1,0,0,1,0,0,1, 0,1,0,0,1,0,0,1]
+  },
+  "queries": [
+    {"expr": "color=red AND shape=circle", "expected_popcount": 0},
+    {"expr": "color=red", "expected_popcount": 4}
+  ]
+}
+
