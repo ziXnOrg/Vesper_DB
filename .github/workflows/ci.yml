@@ -45,8 +45,8 @@ jobs:
       - name: Enforce blueprint reference in spec_refs
         run: |
           jq -e '
-            (.spec_refs // []) 
-            | map( . | tostring ) 
+            (.spec_refs // [])
+            | map( . | tostring )
             | any( . == "docs/blueprint.md" or test("(^|/)blueprint\\.md$") )
           ' experiments/examples/prompt.manifest.json > /dev/null || {
             echo "spec_refs must include docs/blueprint.md (or a path ending in blueprint.md)";
@@ -72,6 +72,52 @@ jobs:
     name: Basic repo checks
     runs-on: ubuntu-latest
     steps:
+
+  headers-build:
+    name: Header-only build check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Configure
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: |
+          cmake --build build -j
+
+      - name: Build headers check
+        run: |
+          cmake --build build -j --target vesper_headers_check
+
+
+  tests:
+    name: Build and run tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Configure (tests)
+        run: cmake -S . -B build -DVESPER_ENABLE_TESTS=ON -DCMAKE_BUILD_TYPE=Release
+      - name: Build (tests)
+        run: cmake --build build -j --target vesper_tests
+      - name: Run ctest
+      - name: Build stub lib
+        run: cmake --build build -j --target vesper_stub
+        run: ctest --test-dir build --output-on-failure
+
+
+  bench-build:
+    name: Build micro-benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Configure (bench)
+        run: cmake -S . -B build -DVESPER_ENABLE_BENCH=ON -DCMAKE_BUILD_TYPE=Release
+      - name: Build (bench)
+        run: cmake --build build -j --target vesper_bench_dummy
+
       - name: Checkout
         uses: actions/checkout@v4
 
