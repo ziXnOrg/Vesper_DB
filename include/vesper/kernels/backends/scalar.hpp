@@ -41,5 +41,10 @@ inline const KernelOps& select_backend(std::string_view name) noexcept {
   return get_scalar_ops();
 }
 
+inline const KernelOps& select_backend_auto() noexcept {
+  // Stub: always return scalar ops for now
+  return get_scalar_ops();
+}
+
 } // namespace vesper::kernels
 
