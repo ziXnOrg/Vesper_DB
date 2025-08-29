@@ -45,4 +45,5 @@ ctest --test-dir build --output-on-failure -R "wal.*(replay|snapshot)"
 ## Test helpers
 
 - Prefer using tests/support/wal_replay_helpers.* to reconstruct baseline (≤cutoff) and apply replay (>cutoff) in WAL replay tests.
+- For wal.manifest read/modify/write in tests, use tests/support/manifest_test_helpers.* (read_manifest_entries, write_manifest_entries, entries_* transforms, list_wal_files_sorted). Avoid duplicating parsing/rewrites.
 
