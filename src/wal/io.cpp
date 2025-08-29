@@ -8,6 +8,8 @@
 #include <iomanip>
 #include <sstream>
 
+#include <algorithm>
+
 namespace vesper::wal {
 
 WalWriter::~WalWriter(){ if (out_.is_open()) out_.close(); }
@@ -62,6 +64,22 @@ auto WalWriter::open(const WalWriterOptions& opts)
   return w;
 }
 
+
+namespace {
+static void upsert_manifest(const std::filesystem::path& dir, const vesper::wal::ManifestEntry& e){
+  using namespace vesper::wal;
+  Manifest m{};
+  if (auto mx = load_manifest(dir); mx) { m = *mx; }
+  // replace any existing entry for same seq or filename
+  m.entries.erase(std::remove_if(m.entries.begin(), m.entries.end(), [&](const ManifestEntry& x){
+    return x.seq == e.seq || x.file == e.file;
+  }), m.entries.end());
+  m.entries.push_back(e);
+  std::sort(m.entries.begin(), m.entries.end(), [](const ManifestEntry& a, const ManifestEntry& b){ return a.seq < b.seq; });
+  (void)save_manifest(dir, m);
+}
+}
+
 auto WalWriter::open_seq(std::uint64_t seq) -> std::expected<void, vesper::core::error> {
   using vesper::core::error; using vesper::core::error_code;
   if (out_.is_open()) out_.close();
@@ -79,8 +97,8 @@ auto WalWriter::maybe_rotate(std::size_t next_frame_bytes) -> std::expected<void
   if (!out_.is_open()) return open_seq(seq_index_ + 1);
   if (cur_bytes_ + next_frame_bytes > max_file_bytes_) {
     // Update manifest for the finished file
-    Manifest mf; mf.entries.push_back({path_.filename().string(), seq_index_, cur_start_lsn_, cur_end_lsn_, cur_frames_, cur_bytes_});
-    (void)save_manifest(dir_, mf);
+    ManifestEntry e{path_.filename().string(), seq_index_, cur_start_lsn_, cur_start_lsn_, cur_end_lsn_, cur_frames_, cur_bytes_};
+    upsert_manifest(dir_, e);
     return open_seq(seq_index_ + 1);
   }
   return {};
@@ -111,19 +129,24 @@ auto WalWriter::append(std::uint64_t lsn, std::uint16_t type, std::span<const st
   return {};
 }
 
-auto WalWriter::flush(bool sync) -> std::expected<void, vesper::core::error> {
-  using vesper::core::error; using vesper::core::error_code;
-
 auto WalWriter::publish_snapshot(std::uint64_t last_lsn) -> std::expected<void, vesper::core::error> {
+  using vesper::core::error; using vesper::core::error_code;
   if (dir_.empty()) {
-    using vesper::core::error; using vesper::core::error_code;
     return std::unexpected(error{error_code::precondition_failed, "not in rotation mode", "wal.io"});
   }
   return save_snapshot(dir_, Snapshot{last_lsn});
 }
 
+
+auto WalWriter::flush(bool sync) -> std::expected<void, vesper::core::error> {
+  using vesper::core::error; using vesper::core::error_code;
   if (!out_.good()) return std::unexpected(error{error_code::io_failed, "writer closed", "wal.io"});
   out_.flush();
+  // If rotating mode and we have an open file, upsert a manifest entry snapshot
+  if (!dir_.empty() && out_.is_open() && cur_frames_ > 0) {
+    ManifestEntry e{path_.filename().string(), seq_index_, cur_start_lsn_, cur_start_lsn_, cur_end_lsn_, cur_frames_, cur_bytes_};
+    upsert_manifest(dir_, e);
+  }
   (void)sync; // fsync intentionally omitted for cross-platform determinism in tests
   return {};
 }
@@ -210,6 +233,20 @@ auto recover_scan_dir(const std::filesystem::path& dir, std::function<void(const
   std::vector<std::filesystem::path> files;
   if (have_manifest) {
     for (auto& e : m.entries) files.push_back(dir / e.file);
+    // Also consider the current (possibly not yet in manifest) highest seq file
+    std::filesystem::path maxp; std::uint64_t maxseq=0;
+    std::regex rx2("^wal-([0-9]{8})\\.log$");
+    for (auto& de : std::filesystem::directory_iterator(dir)) {
+      if (!de.is_regular_file()) continue;
+      auto name = de.path().filename().string();
+      std::smatch mm; if (std::regex_match(name, mm, rx2)) {
+        auto seq = static_cast<std::uint64_t>(std::stoull(mm[1].str()));
+        if (seq > maxseq) { maxseq = seq; maxp = de.path(); }
+      }
+    }
+    if (!maxp.empty()) {
+      if (files.empty() || files.back().filename() != maxp.filename()) files.push_back(maxp);
+    }
   } else {
     std::regex rx("^wal-([0-9]{8})\\.log$");
     std::vector<std::pair<std::uint64_t, std::filesystem::path>> tmp;
@@ -224,10 +261,12 @@ auto recover_scan_dir(const std::filesystem::path& dir, std::function<void(const
     for (auto& kv : tmp) files.push_back(kv.second);
   }
   for (size_t i = 0; i < files.size(); ++i) {
-    // If manifest present and file entirely <= cutoff, skip
+    // Determine if this file is entirely <= cutoff (manifest only)
+    bool skip_deliver = false;
     if (have_manifest) {
-      const auto& me = m.entries[i];
-      if (me.end_lsn <= cutoff_lsn) continue;
+      const auto fname = files[i].filename().string();
+      auto it = std::find_if(m.entries.begin(), m.entries.end(), [&](const ManifestEntry& me){ return me.file == fname; });
+      if (it != m.entries.end() && it->end_lsn <= cutoff_lsn) skip_deliver = true;
     }
 
     // First pass: scan for torn detection (noop callback)
@@ -241,21 +280,23 @@ auto recover_scan_dir(const std::filesystem::path& dir, std::function<void(const
       }
     }
 
-    // Second pass: deliver frames > cutoff
+    // Second pass: deliver frames > cutoff unless manifest says skip
     RecoveryStats filtered{};
     std::uint64_t prev_lsn = 0; bool have_prev = false;
     auto per_frame = [&](const WalFrame& f){
-      if (f.lsn > cutoff_lsn) {
-        on_frame(f);
-        filtered.frames++;
-        filtered.bytes += f.len;
-        filtered.last_lsn = f.lsn;
-        if (f.type < filtered.type_counts.size()) filtered.type_counts[f.type]++;
-        if (filtered.min_len==0 || f.len<filtered.min_len) filtered.min_len=f.len;
-        if (f.len>filtered.max_len) filtered.max_len=f.len;
-        if (f.type==1 || f.type==2) {
-          if (have_prev && f.lsn <= prev_lsn) { filtered.lsn_monotonic=false; filtered.lsn_violations++; }
-          prev_lsn = f.lsn; have_prev = true;
+      if (!skip_deliver) {
+        if (f.lsn > cutoff_lsn) {
+          on_frame(f);
+          filtered.frames++;
+          filtered.bytes += f.len;
+          filtered.last_lsn = f.lsn;
+          if (f.type < filtered.type_counts.size()) filtered.type_counts[f.type]++;
+          if (filtered.min_len==0 || f.len<filtered.min_len) filtered.min_len=f.len;
+          if (f.len>filtered.max_len) filtered.max_len=f.len;
+          if (f.type==1 || f.type==2) {
+            if (have_prev && f.lsn <= prev_lsn) { filtered.lsn_monotonic=false; filtered.lsn_violations++; }
+            prev_lsn = f.lsn; have_prev = true;
+          }
         }
       }
     };

@@ -12,6 +12,8 @@
 #include "vesper/error.hpp"
 #include "vesper/wal/frame.hpp"
 
+#include "vesper/wal/io.hpp" // RecoveryStats, recover_scan_dir
+
 namespace vesper::wal {
 
 // Replays frames' payloads post-snapshot cutoff in order across rotated files.

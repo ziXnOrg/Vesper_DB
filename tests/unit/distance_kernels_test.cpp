@@ -4,6 +4,8 @@
 using namespace vesper::kernels;
 
 TEST_CASE("distance kernels known values", "[kernels][distance]") {
+using Catch::Approx;
+
   float a1[1]{3.0f}; float b1[1]{-1.0f};
   REQUIRE(l2_sq(a1, b1) == Approx(16.0f));
   REQUIRE(inner_product(a1, b1) == Approx(-3.0f));
@@ -19,6 +21,7 @@ TEST_CASE("distance kernels known values", "[kernels][distance]") {
 }
 
 TEST_CASE("distance kernels properties", "[kernels][distance]") {
+  using Catch::Approx;
   float a[4]{0,0,0,0};
   REQUIRE(l2_sq(a, a) == Approx(0.0f));
   float x[2]{2.0f, -5.0f}; float y[2]{-5.0f, 2.0f};

@@ -4,6 +4,8 @@
 #include <vesper/kernels/distance.hpp>
 #include <random>
 
+using Catch::Approx;
+
 using namespace vesper::kernels;
 
 static void make_nonzero(std::vector<float>& v, std::mt19937& rng){
