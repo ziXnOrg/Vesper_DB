@@ -59,6 +59,22 @@ ctest --test-dir build --output-on-failure -R "wal.*(replay|snapshot)"
   - Avoid duplicating parsing/rewrites in tests; keep logic declarative.
 
 
+### Retention helpers quick reference
+
+- APIs:
+  - wal::purge_wal(dir, up_to_lsn)
+  - wal::purge_keep_last_n(dir, keep_last_n)
+  - wal::purge_keep_newer_than(dir, cutoff_time)
+
+- Example (keep last 2 files, then replay > cutoff):
+  - REQUIRE(wal::save_snapshot(dir, wal::Snapshot{.last_lsn = 3}).has_value());
+  - REQUIRE(wal::purge_keep_last_n(dir, 2).has_value());
+  - auto st = wal::recover_scan_dir(dir, [&](const wal::WalFrame& f){ /* use f */ });
+
+- Run only retention tests:
+  - ctest --test-dir build --output-on-failure -R "retention|purge"
+
+
 ## WAL stabilization summary (Phase 4)
 
 - Coverage added (deterministic, cross-platform):
