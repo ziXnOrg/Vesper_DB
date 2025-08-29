@@ -1,5 +1,6 @@
 #include "vesper/wal/io.hpp"
 #include "vesper/wal/manifest.hpp"
+#include "vesper/wal/snapshot.hpp"
 
 #include <vector>
 #include <cstring>
@@ -112,6 +113,15 @@ auto WalWriter::append(std::uint64_t lsn, std::uint16_t type, std::span<const st
 
 auto WalWriter::flush(bool sync) -> std::expected<void, vesper::core::error> {
   using vesper::core::error; using vesper::core::error_code;
+
+auto WalWriter::publish_snapshot(std::uint64_t last_lsn) -> std::expected<void, vesper::core::error> {
+  if (dir_.empty()) {
+    using vesper::core::error; using vesper::core::error_code;
+    return std::unexpected(error{error_code::precondition_failed, "not in rotation mode", "wal.io"});
+  }
+  return save_snapshot(dir_, Snapshot{last_lsn});
+}
+
   if (!out_.good()) return std::unexpected(error{error_code::io_failed, "writer closed", "wal.io"});
   out_.flush();
   (void)sync; // fsync intentionally omitted for cross-platform determinism in tests

@@ -65,6 +65,9 @@ public:
 
   auto flush(bool sync = false) -> std::expected<void, vesper::core::error>;
 
+  // Publish a snapshot in rotation mode (writes wal.snapshot in dir_). No fsync; deterministic.
+  auto publish_snapshot(std::uint64_t last_lsn) -> std::expected<void, vesper::core::error>;
+
   const std::filesystem::path& path() const noexcept { return path_; }
   std::uint64_t index() const noexcept { return seq_index_; }
 
