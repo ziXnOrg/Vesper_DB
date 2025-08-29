@@ -18,7 +18,7 @@ add_library(vesper_core STATIC src/inmemory_collection.cpp src/filter_eval.cpp)
 target_link_libraries(vesper_core PRIVATE vesper_headers)
 
 # WAL library
-add_library(vesper_wal STATIC src/wal/frame.cpp src/wal/io.cpp src/wal/manifest.cpp src/wal/snapshot.cpp)
+add_library(vesper_wal STATIC src/wal/frame.cpp src/wal/io.cpp src/wal/manifest.cpp src/wal/snapshot.cpp src/wal/retention.cpp)
 target_link_libraries(vesper_wal PRIVATE vesper_headers)
 
 # Dummy translation unit to force header checks in CI

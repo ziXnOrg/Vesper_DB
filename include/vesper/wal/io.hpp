@@ -42,6 +42,7 @@ struct WalWriterOptions {
   std::filesystem::path dir;     /**< directory to place wal-*.log files */
   std::string prefix{"wal-"};   /**< file prefix */
   std::uint64_t max_file_bytes{};/**< rotate before a frame would exceed this size; 0 disables rotation */
+  bool strict_lsn_monotonic{false}; /**< if true, enforce strictly increasing LSN for TYPE in {1,2} */
 };
 
 class WalWriter {
@@ -74,11 +75,14 @@ private:
   std::filesystem::path dir_;
   std::string prefix_{"wal-"};
   std::uint64_t max_file_bytes_{};
+  bool strict_lsn_monotonic_{};
   std::uint64_t seq_index_{}; // current file sequence index
   std::uint64_t cur_bytes_{}; // current file size in bytes
   std::uint64_t cur_frames_{};
   std::uint64_t cur_start_lsn_{};
   std::uint64_t cur_end_lsn_{};
+  std::uint64_t prev_lsn_{};
+  bool have_prev_{false};
 
   std::ofstream out_;
 
