@@ -6,6 +6,10 @@
  * Format (v1):
  *   vesper-wal-snapshot v1\n
  *   last_lsn=<u64>\n
+ * Atomic save
+ * - When VESPER_ENABLE_ATOMIC_RENAME is enabled (default on supported platforms), save_snapshot writes
+ *   to a temporary file in the same directory and then renames it to wal.snapshot.
+ * - Otherwise, it falls back to a simple truncating write.
  */
 
 #include <cstdint>

@@ -3,6 +3,14 @@
 #include <fstream>
 #include <string>
 
+#ifndef VESPER_ENABLE_ATOMIC_RENAME
+#if defined(_WIN32) || defined(__linux__) || defined(__APPLE__)
+#define VESPER_ENABLE_ATOMIC_RENAME 1
+#else
+#define VESPER_ENABLE_ATOMIC_RENAME 0
+#endif
+#endif
+
 namespace vesper::wal {
 
 auto load_snapshot(const std::filesystem::path& dir)
@@ -31,11 +39,31 @@ auto load_snapshot(const std::filesystem::path& dir)
 auto save_snapshot(const std::filesystem::path& dir, const Snapshot& s)
     -> std::expected<void, vesper::core::error> {
   using vesper::core::error; using vesper::core::error_code;
+#if VESPER_ENABLE_ATOMIC_RENAME
+  auto p_tmp = dir / "wal.snapshot.tmp";
+  {
+    std::ofstream out(p_tmp, std::ios::binary | std::ios::trunc);
+    if (!out.good()) return std::unexpected(error{error_code::io_failed, "snapshot tmp write failed", "wal.snapshot"});
+    out << "vesper-wal-snapshot v1\n";
+    out << "last_lsn=" << s.last_lsn << "\n";
+  }
+  std::error_code ec;
+  std::filesystem::rename(p_tmp, dir / "wal.snapshot", ec);
+  if (ec) {
+    // Fallback to simple write
+    auto p = dir / "wal.snapshot";
+    std::ofstream out(p, std::ios::binary | std::ios::trunc);
+    if (!out.good()) return std::unexpected(error{error_code::io_failed, "snapshot write failed", "wal.snapshot"});
+    out << "vesper-wal-snapshot v1\n";
+    out << "last_lsn=" << s.last_lsn << "\n";
+  }
+#else
   auto p = dir / "wal.snapshot";
   std::ofstream out(p, std::ios::binary | std::ios::trunc);
   if (!out.good()) return std::unexpected(error{error_code::io_failed, "snapshot write failed", "wal.snapshot"});
   out << "vesper-wal-snapshot v1\n";
   out << "last_lsn=" << s.last_lsn << "\n";
+#endif
   return {};
 }
 
