@@ -57,10 +57,10 @@ auto collection::search(const float* q, std::size_t dim, const search_params& p,
   for (auto id : candidates) {
     auto it = impl->idx->store.find(id);
     if (it == impl->idx->store.end()) continue;
-    float d = detail::inmem_index::l2(qv, it->second.vec);
+    float d = kernels::l2_sq(qv, it->second.vec);
     out.push_back({id, d});
   }
-  std::sort(out.begin(), out.end(), [](auto& a, auto& b){ return a.score < b.score; });
+  std::sort(out.begin(), out.end(), [](auto& a, auto& b){ if (a.score == b.score) return a.id < b.id; return a.score < b.score; });
   if (out.size() > p.k) out.resize(p.k);
   return out;
 }
