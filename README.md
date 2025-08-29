@@ -76,13 +76,6 @@ Full details in: `blueprint.md`, `benchmark-plan.md`
 
 ---
 
-## Contributing
-
-We use a deterministic, tests-first, prompt-first workflow (`temperature=0.0, top_p=1.0, fixed seed`).  
-See `CONTRIBUTING.md` for branching guidelines, PR flow, and CI/schema checks.
-
----
-
 ## License
 
 Apache License 2.0 — see [`LICENSE`](./LICENSE) for details.
