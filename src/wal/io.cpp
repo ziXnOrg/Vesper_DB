@@ -284,7 +284,11 @@ auto recover_scan_dir(const std::filesystem::path& dir, std::function<void(const
     RecoveryStats filtered{};
     std::uint64_t prev_lsn = 0; bool have_prev = false;
     auto per_frame = [&](const WalFrame& f){
+#ifndef VESPER_WAL_DISABLE_MANIFEST_UPSERT_ON_FLUSH
       if (!skip_deliver) {
+#else
+      if (true) {
+#endif
         if (f.lsn > cutoff_lsn) {
           on_frame(f);
           filtered.frames++;

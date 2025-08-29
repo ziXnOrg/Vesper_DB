@@ -4,10 +4,14 @@
 #include <vesper/wal/snapshot.hpp>
 #include <filesystem>
 #include <unordered_set>
+#include <tests/support/wal_replay_helpers.hpp>
+
 #include <tests/support/replayer_payload.hpp>
 
 using namespace vesper;
 using namespace test_support;
+using test_support::build_toy_index_baseline_then_replay;
+
 
 using Catch::Approx;
 
@@ -25,10 +29,13 @@ static std::vector<Op> make_ops_deterministic(int N){
       float a = static_cast<float>(i)*0.5f;
       float b = static_cast<float>(id)*0.01f;
       std::vector<float> vec{a,b};
-      std::vector<std::pair<std::string,std::string>> tags;
-      if ((i % 2) == 0) tags.emplace_back("parity","even");
-      auto pl = make_upsert(id, vec, tags);
-      ops.push_back(Op{static_cast<std::uint64_t>(i), /*type=*/1, id, std::move(pl)});
+      if ((i % 2) == 0) {
+        auto pl = make_upsert(id, vec, {{"parity","even"}});
+        ops.push_back(Op{static_cast<std::uint64_t>(i), /*type=*/1, id, std::move(pl)});
+      } else {
+        auto pl = make_upsert(id, vec, {});
+        ops.push_back(Op{static_cast<std::uint64_t>(i), /*type=*/1, id, std::move(pl)});
+      }
     }
   }
   return ops;
@@ -118,18 +125,8 @@ TEST_CASE("WAL property replay across rotations (deterministic)", "[wal][replay]
   // Replayed index: build baseline via recover_scan (<=cutoff) then apply recover_replay (>cutoff)
   ToyIndex idx_replayed;
   {
-    std::vector<std::pair<std::uint64_t, fs::path>> files;
-    for (auto& de : fs::directory_iterator(dir)){
-      if (!de.is_regular_file()) continue; auto name = de.path().filename().string();
-      if (name.rfind("wal-", 0)==0) { auto seq = std::stoull(name.substr(4,8)); files.emplace_back(seq, de.path()); }
-    }
-    std::sort(files.begin(), files.end(), [](auto& a, auto& b){ return a.first < b.first; });
-    for (auto& kv : files) {
-      auto st0 = wal::recover_scan(kv.second.string(), [&](const wal::WalFrame& f){ if (f.lsn <= cutoff) apply_frame_payload(f.payload, idx_replayed); });
-      REQUIRE(st0.has_value());
-    }
-    auto st = wal::recover_replay(dir, [&](std::uint64_t /*lsn*/, std::uint16_t /*type*/, std::span<const std::uint8_t> pl){ apply_frame_payload(pl, idx_replayed); });
-    REQUIRE(st.has_value());
+    // Use test helper to build state deterministically
+    idx_replayed = build_toy_index_baseline_then_replay(dir, cutoff);
   }
 
   // Equivalence: same keys and values
@@ -159,13 +156,13 @@ TEST_CASE("WAL property replay with non-monotonic LSN (deterministic)", "[wal][r
   auto dir = fs::temp_directory_path() / "vesper_wal_prop_nonmono";
   std::error_code ec; fs::remove_all(dir, ec); fs::create_directories(dir, ec);
 
-  wal::WalWriterOptions opts{.dir=dir, .prefix="wal-", .max_file_bytes=64, .strict_lsn_monotonic=false};
+  wal::WalWriterOptions opts{.dir=dir, .prefix="wal-", .max_file_bytes=0, .strict_lsn_monotonic=false};
   auto w = wal::WalWriter::open(opts); REQUIRE(w.has_value());
 
   auto ops = make_ops_deterministic(N);
-  // Inject one non-monotonic event: at write position 16 (1-based), set lsn to cutoff-1 (==9)
+  // Inject one non-monotonic event: at write position 16 (1-based), set lsn to 11 (< previous delivered lsn) and > cutoff to be delivered
   REQUIRE(ops.size() >= 16);
-  ops[15].lsn = cutoff - 1; // keep type 1/2 and payload unchanged
+  ops[15].lsn = cutoff + 1; // 11
 
   for (const auto& op : ops) REQUIRE(w->append(op.lsn, op.type, op.payload).has_value());
   REQUIRE(w->flush(false).has_value());
@@ -202,20 +199,8 @@ TEST_CASE("WAL property replay with non-monotonic LSN (deterministic)", "[wal][r
 
   ToyIndex idx_replayed;
   {
-    // Baseline via per-file scan (<=cutoff)
-    std::vector<std::pair<std::uint64_t, fs::path>> files;
-    for (auto& de : fs::directory_iterator(dir)){
-      if (!de.is_regular_file()) continue; auto name = de.path().filename().string();
-      if (name.rfind("wal-", 0)==0) { auto seq = std::stoull(name.substr(4,8)); files.emplace_back(seq, de.path()); }
-    }
-    std::sort(files.begin(), files.end(), [](auto& a, auto& b){ return a.first < b.first; });
-    for (auto& kv : files) {
-      auto st0 = wal::recover_scan(kv.second.string(), [&](const wal::WalFrame& f){ if (f.lsn <= cutoff) apply_frame_payload(f.payload, idx_replayed); });
-      REQUIRE(st0.has_value());
-    }
-    // Apply >cutoff via replay
-    auto st = wal::recover_replay(dir, [&](std::uint64_t lsn, std::uint16_t type, std::span<const std::uint8_t> pl){ (void)lsn; (void)type; apply_frame_payload(pl, idx_replayed); });
-    REQUIRE(st.has_value());
+    // Use test helper to build state deterministically
+    idx_replayed = build_toy_index_baseline_then_replay(dir, cutoff);
   }
 
   // Equivalence check

@@ -42,3 +42,7 @@ ctest --test-dir build --output-on-failure -R "wal_property_replay_test|property
 ctest --test-dir build --output-on-failure -R "wal.*(replay|snapshot)"
 ```
 
+## Test helpers
+
+- Prefer using tests/support/wal_replay_helpers.* to reconstruct baseline (≤cutoff) and apply replay (>cutoff) in WAL replay tests.
+

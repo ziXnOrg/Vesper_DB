@@ -4,8 +4,12 @@
 #include <filesystem>
 #include <tests/support/replayer_payload.hpp>
 
+#include <tests/support/wal_replay_helpers.hpp>
+
 using namespace vesper;
 using namespace test_support;
+
+using test_support::build_toy_index_baseline_then_replay;
 
 using Catch::Approx;
 
@@ -53,22 +57,7 @@ TEST_CASE("toy replayer with snapshot cutoff", "[wal][replay][toy]"){
   REQUIRE(w->flush(false).has_value());
   REQUIRE(w->publish_snapshot(2).has_value());
 
-  ToyIndex idx;
-  // Reconstruct baseline snapshot state by applying frames up to and including cutoff
-  const std::uint64_t cutoff = 2;
-  std::vector<std::pair<std::uint64_t, std::filesystem::path>> files;
-  for (auto& de : fs::directory_iterator(dir)){
-    if (!de.is_regular_file()) continue; auto name = de.path().filename().string();
-    if (name.rfind("wal-", 0)==0) { auto seq = std::stoull(name.substr(4,8)); files.emplace_back(seq, de.path()); }
-  }
-  std::sort(files.begin(), files.end(), [](auto& a, auto& b){ return a.first < b.first; });
-  for (auto& kv : files){
-    auto st0 = wal::recover_scan(kv.second.string(), [&](const wal::WalFrame& f){ if (f.lsn <= cutoff) apply_frame_payload(f.payload, idx); });
-    REQUIRE(st0.has_value());
-  }
-  // Now replay frames strictly after cutoff
-  auto st = wal::recover_replay(dir, [&](std::uint64_t, std::uint16_t, std::span<const std::uint8_t> pl){ apply_frame_payload(pl, idx); });
-  REQUIRE(st.has_value());
+  ToyIndex idx = build_toy_index_baseline_then_replay(dir, /*cutoff=*/2);
   REQUIRE(idx.count(201) == 1);
   REQUIRE(idx.count(200) == 1);
   REQUIRE(idx.at(200).vec[0] == Approx(3.0f));
@@ -97,9 +86,7 @@ TEST_CASE("toy replayer tolerates torn tail on last file", "[wal][replay][toy]")
   }
   REQUIRE(!last.empty()); auto sz = fs::file_size(last); fs::resize_file(last, sz-1, ec); REQUIRE(!ec);
 
-  ToyIndex idx;
-  auto st = wal::recover_replay(dir, [&](std::uint64_t, std::uint16_t, std::span<const std::uint8_t> pl){ apply_frame_payload(pl, idx); });
-  REQUIRE(st.has_value());
+  ToyIndex idx = build_toy_index_baseline_then_replay(dir, /*cutoff=*/0);
   REQUIRE(idx.count(300) == 1);
   REQUIRE(idx.count(301) == 1);
 

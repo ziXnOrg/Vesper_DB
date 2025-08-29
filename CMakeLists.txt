@@ -50,7 +50,8 @@ if (VESPER_ENABLE_TESTS)
   FetchContent_MakeAvailable(catch2)
 
   file(GLOB TEST_SOURCES
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/*.cpp)
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/*.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/support/*.cpp)
 
   add_executable(vesper_tests ${TEST_SOURCES})
   target_link_libraries(vesper_tests PRIVATE Catch2::Catch2WithMain vesper_headers vesper_core vesper_wal)
