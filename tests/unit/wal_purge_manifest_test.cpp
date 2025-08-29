@@ -3,32 +3,23 @@
 #include <vesper/wal/replay.hpp>
 #include <vesper/wal/snapshot.hpp>
 #include <filesystem>
-#include <fstream>
 #include <vector>
 #include <algorithm>
 
 #include <tests/support/replayer_payload.hpp>
 #include <tests/support/wal_replay_helpers.hpp>
+#include <tests/support/manifest_test_helpers.hpp>
 
 using namespace vesper;
 using namespace test_support;
+using namespace manifest_test_helpers;
 
 namespace {
 namespace fs = std::filesystem;
 
-static std::vector<fs::path> list_wal_files_sorted(const fs::path& dir){
-  std::vector<std::pair<std::uint64_t, fs::path>> v;
-  for (auto& de : fs::directory_iterator(dir)){
-    if (!de.is_regular_file()) continue;
-    auto name = de.path().filename().string();
-    if (name.rfind("wal-", 0)==0 && name.size() >= 4+8) {
-      try { auto seq = static_cast<std::uint64_t>(std::stoull(name.substr(4,8))); v.emplace_back(seq, de.path()); } catch(...) {}
-    }
-  }
-  std::sort(v.begin(), v.end(), [](auto& a, auto& b){ return a.first < b.first; });
-  std::vector<fs::path> out; out.reserve(v.size());
-  for (auto& kv : v) out.push_back(kv.second);
-  return out;
+static std::vector<fs::path> list_wal_files_sorted_paths(const fs::path& dir){
+  auto pairs = list_wal_files_sorted(dir);
+  std::vector<fs::path> out; out.reserve(pairs.size()); for (auto& kv : pairs) out.push_back(kv.second); return out;
 }
 
 static void make_sequence_dir(const fs::path& dir){
@@ -50,33 +41,17 @@ static void make_sequence_dir(const fs::path& dir){
 
 static void make_manifest_stale_drop_last(const fs::path& dir){
   auto files = list_wal_files_sorted(dir); REQUIRE(files.size() >= 2);
-  auto last_file = files.back().filename().string();
+  auto last_file = files.back().second.filename().string();
   auto manifest_path = dir / "wal.manifest";
-  REQUIRE(fs::exists(manifest_path));
-  std::ifstream in(manifest_path);
-  REQUIRE(in.good());
-  std::string header; std::getline(in, header);
-  REQUIRE(header == std::string("vesper-wal-manifest v1"));
-  std::vector<std::string> lines; std::string line;
-  while (std::getline(in, line)) lines.push_back(line);
-  in.close();
-  std::vector<std::string> kept;
-  for (const auto& ln : lines){ if (ln.find(last_file) == std::string::npos) kept.push_back(ln); }
-  {
-    std::ofstream out(manifest_path, std::ios::binary | std::ios::trunc);
-    REQUIRE(out.good());
-    out << "vesper-wal-manifest v1\n";
-    for (const auto& ln : kept) out << ln << "\n";
-  }
+  auto lines = read_manifest_entries(manifest_path);
+  auto kept = entries_without_filename(lines, last_file);
+  write_manifest_entries(manifest_path, kept);
   // verify last_file is absent
-  {
-    std::ifstream chk(manifest_path);
-    REQUIRE(chk.good()); std::string x; bool seen=false; while (std::getline(chk, x)) if (x.find(last_file)!=std::string::npos) seen=true; REQUIRE(!seen);
-  }
+  auto chk = read_manifest_entries(manifest_path);
+  bool seen=false; for (auto& ln : chk) if (ln.find(last_file)!=std::string::npos) seen=true; REQUIRE(!seen);
 }
 
 static void assert_post_purge_stats_and_state(const fs::path& dir, std::uint64_t cutoff){
-  // Stats
   std::size_t delivered=0; auto r = wal::recover_scan_dir(dir, [&](const wal::WalFrame& f){ delivered += f.payload.size(); });
   REQUIRE(r.has_value()); auto st = *r;
   REQUIRE(st.frames == 2);
@@ -85,7 +60,6 @@ static void assert_post_purge_stats_and_state(const fs::path& dir, std::uint64_t
   REQUIRE(st.type_counts[2] == 0);
   REQUIRE(st.lsn_monotonic == true);
   REQUIRE(delivered > 0);
-  // Replay state
   ToyIndex idx = build_toy_index_baseline_then_replay(dir, cutoff);
   REQUIRE(idx.count(101) == 0);
   REQUIRE(idx.count(102) == 1);
@@ -105,22 +79,20 @@ TEST_CASE("purge_wal honors cutoff with manifest present and stale", "[wal][mani
   // Case 1: Up-to-date manifest
   fs::path dir1 = fs::temp_directory_path() / "vesper_wal_purge_manifest";
   make_sequence_dir(dir1);
-  auto files1_before = list_wal_files_sorted(dir1); REQUIRE(files1_before.size() >= 3);
+  auto files1_before = list_wal_files_sorted_paths(dir1); REQUIRE(files1_before.size() >= 3);
   REQUIRE(wal::purge_wal(dir1, cutoff).has_value());
-  auto files1_after = list_wal_files_sorted(dir1);
-  // Only files with frames lsn>3 remain; since we wrote one frame per file, last two files remain
+  auto files1_after = list_wal_files_sorted_paths(dir1);
   REQUIRE(files1_after.size() == 2);
   assert_post_purge_stats_and_state(dir1, cutoff);
 
   // Case 2: Stale manifest (drop last file entry), then purge
   fs::path dir2 = fs::temp_directory_path() / "vesper_wal_purge_manifest_stale";
   make_sequence_dir(dir2);
-  auto files2_before = list_wal_files_sorted(dir2); REQUIRE(files2_before.size() >= 3);
+  auto files2_before = list_wal_files_sorted_paths(dir2); REQUIRE(files2_before.size() >= 3);
   make_manifest_stale_drop_last(dir2);
   REQUIRE(wal::purge_wal(dir2, cutoff).has_value());
-  auto files2_after = list_wal_files_sorted(dir2);
+  auto files2_after = list_wal_files_sorted_paths(dir2);
   REQUIRE(files2_after.size() == files1_after.size());
-  // Compare filename sets
   std::vector<std::string> names1, names2;
   for (auto& p : files1_after) names1.push_back(p.filename().string());
   for (auto& p : files2_after) names2.push_back(p.filename().string());
@@ -128,9 +100,9 @@ TEST_CASE("purge_wal honors cutoff with manifest present and stale", "[wal][mani
   assert_post_purge_stats_and_state(dir2, cutoff);
 
   // Case 3: Idempotency
-  auto files_before_idem = list_wal_files_sorted(dir2);
+  auto files_before_idem = list_wal_files_sorted_paths(dir2);
   REQUIRE(wal::purge_wal(dir2, cutoff).has_value());
-  auto files_after_idem = list_wal_files_sorted(dir2);
+  auto files_after_idem = list_wal_files_sorted_paths(dir2);
   REQUIRE(files_before_idem == files_after_idem);
   assert_post_purge_stats_and_state(dir2, cutoff);
 

@@ -3,27 +3,18 @@
 #include <vesper/wal/replay.hpp>
 #include <vesper/wal/snapshot.hpp>
 #include <filesystem>
-#include <fstream>
 #include <vector>
 
 #include <tests/support/replayer_payload.hpp>
 #include <tests/support/wal_replay_helpers.hpp>
+#include <tests/support/manifest_test_helpers.hpp>
 
 using namespace vesper;
 using namespace test_support;
+using namespace manifest_test_helpers;
 
 namespace {
 namespace fs = std::filesystem;
-
-static std::vector<std::pair<std::uint64_t, fs::path>> wal_files_sorted(const fs::path& dir){
-  std::vector<std::pair<std::uint64_t, fs::path>> v;
-  for (auto& de : fs::directory_iterator(dir)){
-    if (!de.is_regular_file()) continue; auto name = de.path().filename().string();
-    if (name.rfind("wal-", 0)==0 && name.size() >= 4+8) { try { auto seq = static_cast<std::uint64_t>(std::stoull(name.substr(4,8))); v.emplace_back(seq, de.path()); } catch(...){} }
-  }
-  std::sort(v.begin(), v.end(), [](auto&a, auto&b){ return a.first < b.first; });
-  return v;
-}
 
 static void write_sequence(const fs::path& dir){
   std::error_code ec; fs::remove_all(dir, ec); fs::create_directories(dir, ec);
@@ -45,15 +36,12 @@ static void write_sequence(const fs::path& dir){
 }
 
 static void make_manifest_stale_drop_last(const fs::path& dir){
-  auto files = wal_files_sorted(dir); REQUIRE(!files.empty());
+  auto files = list_wal_files_sorted(dir); if (files.empty()) return;
   auto last_file = files.back().second.filename().string();
-  auto manifest_path = dir / "wal.manifest"; REQUIRE(fs::exists(manifest_path));
-  std::ifstream in(manifest_path); REQUIRE(in.good()); std::string header; std::getline(in, header); REQUIRE(header == std::string("vesper-wal-manifest v1"));
-  std::vector<std::string> lines; std::string line; while (std::getline(in, line)) lines.push_back(line);
-  in.close();
-  std::vector<std::string> kept; for (auto& ln : lines) if (ln.find(last_file)==std::string::npos) kept.push_back(ln);
-  std::ofstream out(manifest_path, std::ios::binary | std::ios::trunc); REQUIRE(out.good());
-  out << "vesper-wal-manifest v1\n"; for (auto& ln : kept) out << ln << "\n";
+  auto manifest_path = dir / "wal.manifest";
+  auto lines = read_manifest_entries(manifest_path);
+  auto kept = entries_without_filename(lines, last_file);
+  write_manifest_entries(manifest_path, kept);
 }
 
 } // namespace

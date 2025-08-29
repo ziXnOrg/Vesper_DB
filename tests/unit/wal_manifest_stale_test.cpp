@@ -3,14 +3,15 @@
 #include <vesper/wal/replay.hpp>
 #include <vesper/wal/snapshot.hpp>
 #include <filesystem>
-#include <fstream>
 #include <vector>
 
 #include <tests/support/replayer_payload.hpp>
 #include <tests/support/wal_replay_helpers.hpp>
+#include <tests/support/manifest_test_helpers.hpp>
 
 using namespace vesper;
 using namespace test_support;
+using namespace manifest_test_helpers;
 
 TEST_CASE("stale manifest still scans highest-seq file", "[wal][manifest][replay][stale]"){
   namespace fs = std::filesystem;
@@ -32,48 +33,19 @@ TEST_CASE("stale manifest still scans highest-seq file", "[wal][manifest][replay
   REQUIRE(w->append(4, /*type=*/1, up103).has_value());
   REQUIRE(w->flush(false).has_value());
 
-  // Enumerate wal-* files and ensure rotation occurred
-  std::vector<std::pair<std::uint64_t, fs::path>> files;
-  for (auto& de : fs::directory_iterator(dir)){
-    if (!de.is_regular_file()) continue; auto name = de.path().filename().string();
-    if (name.rfind("wal-", 0)==0 && name.size() >= 4+8) {
-      try { auto seq = static_cast<std::uint64_t>(std::stoull(name.substr(4,8))); files.emplace_back(seq, de.path()); } catch (...) {}
-    }
-  }
-  std::sort(files.begin(), files.end(), [](auto& a, auto& b){ return a.first < b.first; });
-  REQUIRE(files.size() >= 2);
+  auto files = list_wal_files_sorted(dir); REQUIRE(files.size() >= 2);
   auto last_file = files.back().second.filename().string();
 
-  // Make manifest stale by removing last file's entry
+  // Make manifest stale by removing last file's entry using helper
   auto manifest_path = dir / "wal.manifest";
-  REQUIRE(fs::exists(manifest_path));
-  std::ifstream in(manifest_path);
-  REQUIRE(in.good());
-  std::string header; std::getline(in, header);
-  REQUIRE(header == std::string("vesper-wal-manifest v1"));
-  std::vector<std::string> lines; std::string line;
-  while (std::getline(in, line)) lines.push_back(line);
-  in.close();
-  // Filter out the line with file=<last_file>
-  std::vector<std::string> kept;
-  for (const auto& ln : lines){
-    if (ln.rfind(std::string("file=") + last_file + " ", 0) == 0) continue;
-    kept.push_back(ln);
-  }
-  // Rewrite manifest without the last entry
+  REQUIRE(std::filesystem::exists(manifest_path));
+  auto lines = read_manifest_entries(manifest_path);
+  auto kept = entries_without_filename(lines, last_file);
+  write_manifest_entries(manifest_path, kept);
+  // Verify last_file is absent
   {
-    std::ofstream out(manifest_path, std::ios::binary | std::ios::trunc);
-    REQUIRE(out.good());
-    out << "vesper-wal-manifest v1\n";
-    for (const auto& ln : kept) out << ln << "\n";
-  }
-  // Verify last_file is absent from manifest
-  {
-    std::ifstream chk(manifest_path);
-    REQUIRE(chk.good());
-    std::string x; bool seen=false;
-    while (std::getline(chk, x)) { if (x.find(last_file) != std::string::npos) seen=true; }
-    REQUIRE(seen == false);
+    auto chk = read_manifest_entries(manifest_path);
+    bool seen=false; for (auto& ln : chk) if (ln.find(last_file)!=std::string::npos) seen=true; REQUIRE(!seen);
   }
 
   // Scan directory: even with stale manifest, highest-seq file must be included
@@ -87,7 +59,6 @@ TEST_CASE("stale manifest still scans highest-seq file", "[wal][manifest][replay
   REQUIRE(st.type_counts[2] == 1);
   REQUIRE(st.lsn_monotonic == true);
   REQUIRE(delivered_bytes == up101.size() + up102.size() + del101.size() + up103.size());
-  // Prove we saw frames from the highest-seq file by asserting LSN 4 was delivered
   REQUIRE(std::find(lsns.begin(), lsns.end(), 4) != lsns.end());
 
   // Replay correctness
