@@ -68,14 +68,6 @@ Full details in: `blueprint.md`, `benchmark-plan.md`
 
 ---
 
-## Roadmap and Development
-
-- **Project Source of Truth:** [`blueprint.md`](./blueprint.md)
-- **Prompt Blueprint:** AI evaluation methodology in [`prompt-blueprint.md`](./prompt-blueprint.md)
-- **Execution Plan:** Phases and milestones in [`prompt-dev-roadmap.md`](./prompt-dev-roadmap.md)
-
----
-
 ## License
 
 Apache License 2.0 — see [`LICENSE`](./LICENSE) for details.
