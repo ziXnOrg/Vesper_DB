@@ -1,0 +1,52 @@
+name: Open PR on phase4 branches
+
+on:
+  push:
+    branches:
+      - 'phase4/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  open-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Open PR if missing
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const { owner, repo } = context.repo;
+            const ref = context.ref; // e.g. refs/heads/phase4/wal-tests-stabilization
+            const head = ref.replace('refs/heads/', '');
+            const base = 'main';
+            if (!head.startsWith('phase4/')) {
+              core.info(`Skipping branch ${head}`);
+              return;
+            }
+            const list = await github.rest.pulls.list({ owner, repo, state: 'open', head: `${owner}:${head}` });
+            if (list.data.length > 0) {
+              core.info(`PR already exists for ${head}`);
+              return;
+            }
+            const title = 'phase4: WAL tests stabilization (deterministic fixes; no behavior change)';
+            const body = [
+              'Summary',
+              '- Stabilize WAL-related tests deterministically in Release builds without changing production behavior or API/ABI.',
+              '',
+              'Additions',
+              '- Deterministic property tests:',
+              '  * Rotations + optional torn tail validates RecoveryStats and replay strictly after cutoff',
+              '  * Non-monotonic LSN variant asserts lsn_monotonic=false and lsn_violations=1; replay remains correct',
+              '- New test helper (tests/support/wal_replay_helpers.*) to build baseline (≤cutoff) then replay (>cutoff)',
+              '- tests/README.md additions; fixed filter_eval test map initialization',
+              '',
+              'No API/ABI or behavior changes',
+              '- Production semantics remain intact; changes are deterministic tests, minimal wiring, and manifest filename mapping in recovery.'
+            ].join('\n');
+            await github.rest.pulls.create({ owner, repo, head, base, title, body });
+            core.info(`Opened PR for ${head} -> ${base}`);
+
