@@ -1,169 +1,93 @@
-# Vesper
+# Vesper — Crash-Safe, Embeddable Vector Search Engine (C++20, CPU-only)
 
-**Crash-Safe, Embeddable Vector Search Engine**
+Vesper brings advanced vector search to wherever your data lives—offering uncompromising speed, durability, and privacy for on-device and air-gapped environments.
 
-*Ultra-fast vector search for edge, offline, and privacy-sensitive applications*
-
-## Overview
-
-Vesper brings enterprise-grade vector search directly to where your data lives—delivering uncompromising speed, durability, and privacy for on-device and air-gapped environments. Built with C++20 and optimized for CPU-only deployment, Vesper eliminates the need for cloud dependencies while maintaining production-ready performance.
-
-## Why Choose Vesper?
-
-### 🚀 **Performance Without Compromise**
-- **Sub-20ms latency** on commodity hardware
-- **SIMD-accelerated kernels** (AVX2/AVX-512)
-- **Multiple index strategies** for different use cases
-- **Blazing-fast metadata filtering** with Roaring bitmaps
-
-### 🛡️ **Enterprise-Grade Reliability**
-- **Crash-safe by design** with checksummed WAL
-- **Atomic snapshot publishing** for data integrity
-- **Deterministic persistence** for mission-critical applications
-- **Optional at-rest encryption** (XChaCha20-Poly1305, AES-GCM)
-
-### 🌐 **Deploy Anywhere**
-- **Pure C++20** with stable C ABI
-- **Cross-platform support** (Linux, macOS, Windows)
-- **No GPU requirements** - runs on any modern CPU
-- **Embeddable library** - integrate seamlessly
-
-## Perfect For
-
-### 🎯 **Edge AI & IoT**
-- Offline RAG workflows
-- Real-time similarity search
-- Resource-constrained environments
-- Field robotics and embedded systems
-
-### 🏥 **Regulated Industries**
-- Healthcare data processing
-- Financial services compliance
-- Government and defense applications
-- Data sovereignty requirements
-
-### 🔒 **Privacy-First Applications**
-- Local-only processing
-- Air-gapped deployments
-- GDPR/HIPAA compliance
-- Zero cloud dependencies
-
-## Key Features
-
-### Advanced Indexing
-- **IVF-PQ/OPQ**: Compact, SSD-friendly indexing
-- **HNSW**: High-performance in-memory segments
-- **Disk-graph**: DiskANN-style for billion-scale datasets
-- **Pluggable index families** per collection
-
-### Smart Filtering
-- **Early metadata filtering** during traversal
-- **Roaring bitmap optimization** for AND/intersection operations
-- **Hybrid search capabilities**
-- **Custom filter predicates**
-
-### Production Ready
-- **Crash-safe persistence** with strict fsync discipline
-- **Atomic operations** for data consistency
-- **Memory-mapped file support**
-- **Comprehensive error handling**
-
-## Quick Start
-
-```bash
-# Prerequisites and build instructions
-see docs/SETUP.md
-
-# Sample schemas and examples
-cd experiments/
-
-# Run validation tests
-see experiments/VALIDATION.md
-```
-
-## Performance Targets
-
-| Metric | Target | Notes |
-|--------|-----------|-------|
-| **Latency** | p50: 1-3ms, p99: 10-20ms | 128-1536D vectors |
-| **Quality** | recall@10 ≈ 0.95 | Tunable precision |
-| **Recovery** | Seconds to minutes | WAL replay/snapshot restore |
-| **Throughput** | CPU-bound scaling | No GPU required |
-
-## Technical Architecture
-
-- **[System Design](blueprint.md)**: High-level architecture and data models
-- **[API Documentation](api-notes.md)**: Out-of-code documentation
-- **[Performance Analysis](benchmark-plan.md)**: Detailed benchmarking methodology
-- **[Security Model](threat-model.md)**: Assets, adversaries, and controls
-
-## Platform Support
-
-### Operating Systems
-- ✅ Linux (primary)
-- ✅ macOS 
-- ✅ Windows
-
-### Compiler Requirements
-- **GCC**: 12+ 
-- **Clang**: 15+ / AppleClang 15+
-- **MSVC**: 19.36+
-
-### CPU Requirements
-- **Baseline**: AVX2 for optimal performance
-- **Fallback**: Scalar operations supported
-- **Runtime dispatch**: Automatic CPU feature detection
-
-## Development & Contributing
-
-We follow a **deterministic, tests-first** development approach:
-
-- **AI-assisted development** with fixed parameters (temperature=0.0)
-- **Comprehensive test coverage** before feature implementation
-- **Prompt-driven architecture** for consistency
-
-See **[CONTRIBUTING.md](CONTRIBUTING.md)** for:
-- Branching strategy
-- Pull request workflow
-- CI/CD pipeline
-- Schema validation gates
-
-## Roadmap
-
-| Phase | Focus | Timeline |
-|-------|--------|----------|
-| **Phase 1** | Core engine & basic indexing | Q1 2025 |
-| **Phase 2** | Advanced features & optimization | Q2 2025 |
-| **Phase 3** | Enterprise features & scaling | Q3 2025 |
-
-Detailed roadmap: **[prompt-dev-roadmap.md](prompt-dev-roadmap.md)**
-
-## Security & Privacy
-
-### Built-in Protection
-- 🔒 **No network I/O by default**
-- 🔐 **Optional strong encryption at rest**
-- 📁 **Local-only file operations**
-- 🛡️ **Strict durability guarantees**
-
-### Compliance Ready
-- **GDPR compliant** - data never leaves your infrastructure
-- **HIPAA friendly** - secure local processing
-- **SOC 2 compatible** - comprehensive audit trails
-
-Full security analysis: **[threat-model.md](threat-model.md)**
-
-## License
-
-**Apache License 2.0** - see [LICENSE](LICENSE) for details.
-
-## Get Involved
-
-- 💬 **[Start a Discussion](../../discussions)** - Ask questions, share ideas
-- 🐛 **[Report Issues](../../issues)** - Bug reports and feature requests  
-- 📖 **[Documentation](docs/)** - Setup guides and tutorials
-- 🤝 **[Contributing](CONTRIBUTING.md)** - Join our development community
+Vesper is a single-library, embeddable vector search engine purpose-built for edge, offline, and privacy-sensitive scenarios. Achieve ultra-low latency approximate nearest neighbor (ANN) search with blazing-fast metadata filters and deterministic persistence—no GPUs, cloud, or network IO required. Designed for regulated or crash-critical deployments, Vesper enables recoverable, predictable, and secure AI search on commodity CPUs.
 
 ---
 
-**Ready to bring vector search to the edge?** Start with our [Quick Start Guide](docs/SETUP.md) or explore the [sample applications](experiments/).
+## Key Features
+
+- **Pluggable Index Families per Collection**  
+  - IVF-PQ/OPQ: Compact, SSD-friendly
+  - HNSW: In-memory hot segments
+  - Disk-graph: DiskANN-style, billion-scale
+- **Early, Fast Metadata Filtering:** Roaring bitmaps (AND/intersection during traversal)
+- **Crash-Safety:** Checksummed WAL, atomic snapshot publishing, strict fsync and parent-dir persistence discipline
+- **SIMD-Accelerated Kernels:** AVX2/AVX-512 for top performance, with scalar fallback and pmr arenas
+- **Optional At-Rest Encryption:** XChaCha20-Poly1305 (default), AES-GCM (FIPS-friendly mode)
+- **Portable & Flexible:** Pure C++20, runs on Linux, macOS, Windows. Stable C ABI for bindings—ideal for embedding or extension
+
+---
+
+## Who Should Use Vesper
+
+Choose Vesper if you need:
+- **Edge, Embedded, or Offline AI/RAG workflows:** Run powerful similarity and hybrid search anywhere, without network or cloud dependencies
+- **Crash-Safe and Durable Retrieval:** For medical, IoT, field robotics, or critical business apps that cannot afford data loss
+- **Compliant, Privacy-First Search:** Vesper’s local-only storage and optional encryption support strict regulatory requirements and data sovereignty
+- **Low-Latency AI on Commodity Hardware:** Get <20ms tail latency with no GPU, simply by linking the library
+
+Vesper is built for industries, researchers, and makers who need trustworthy vector search beyond the cloud.
+
+---
+
+## Supported Platforms and CPU Baseline
+
+- **OS:** Linux, macOS, Windows  
+- **Compilers (minimums):** GCC 12+, Clang 15+/AppleClang 15+, MSVC 19.36+  
+- **CPU:** Baseline AVX2 assumed for best performance; auto runtime dispatch with scalar fallback
+
+---
+
+## Quick Start
+
+See `docs/SETUP.md` for prerequisites, build instructions, and micro-benchmarks.  
+Sample schemas/examples are in `experiments/`; validation workflow in `experiments/VALIDATION.md`.
+
+---
+
+## Technical Architecture
+
+- **High-Level Design, Data Model, and Performance:** See [`blueprint.md`](./blueprint.md) for details and diagrams
+- **API Notes:** Out-of-code documentation in [`api-notes.md`](./api-notes.md)
+- **Performance Targets (Initial):**
+    - Latency: `p50 1–3 ms`, `p99 10–20 ms` (128–1536D)
+    - Quality: `recall@10 ≈ 0.95` (tunable)
+    - Recovery: seconds to minutes (WAL replay / snapshot restore)
+
+Full details in: `blueprint.md`, `benchmark-plan.md`
+
+---
+
+## Safety Stance and Privacy
+
+- **No network IO by default:** Library operates only on local files
+- **Optional, strong encryption at rest:** With strict fsync/rename for durability
+- **Threat Model:** See [`threat-model.md`](./threat-model.md) for assets, adversaries, controls, and validation
+
+---
+
+## Roadmap and Development
+
+- **Project Source of Truth:** [`blueprint.md`](./blueprint.md)
+- **Prompt Blueprint:** AI evaluation methodology in [`prompt-blueprint.md`](./prompt-blueprint.md)
+- **Execution Plan:** Phases and milestones in [`prompt-dev-roadmap.md`](./prompt-dev-roadmap.md)
+
+---
+
+## Contributing
+
+We use a deterministic, tests-first, prompt-first workflow (`temperature=0.0, top_p=1.0, fixed seed`).  
+See `CONTRIBUTING.md` for branching guidelines, PR flow, and CI/schema checks.
+
+---
+
+## License
+
+Apache License 2.0 — see [`LICENSE`](./LICENSE) for details.
+
+---
+
+**Questions?**  
+Open an issue or use discussions to get involved.
