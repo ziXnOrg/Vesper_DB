@@ -7,10 +7,10 @@ using namespace vesper;
 static filter_expr make_term(const std::string& f, const std::string& v){ return filter_expr{ filter_expr::and_t{ { filter_expr{ term{f,v} } } } }; }
 
 TEST_CASE("filter eval basic semantics", "[filter]"){
-  filter_eval::tags_t tags1{{{"color","red"},{"shape","circle"}}};
-  filter_eval::nums_t nums1{{{"price", 9.99}}};
-  filter_eval::tags_t tags2{{{"color","blue"}}};
-  filter_eval::nums_t nums2{{{"price", 5.0}}};
+  filter_eval::tags_t tags1{{"color","red"}, {"shape","circle"}};
+  filter_eval::nums_t nums1{{"price", 9.99}};
+  filter_eval::tags_t tags2{{"color","blue"}};
+  filter_eval::nums_t nums2{{"price", 5.0}};
 
   filter_expr t_red{ term{"color","red"} };
   filter_expr t_blue{ term{"color","blue"} };
