@@ -3,6 +3,10 @@
 #include <fstream>
 #include <sstream>
 
+#ifndef VESPER_ENABLE_MANIFEST_FSYNC
+#define VESPER_ENABLE_MANIFEST_FSYNC 0
+#endif
+
 namespace vesper::wal {
 
 auto load_manifest(const std::filesystem::path& dir)
@@ -31,10 +35,12 @@ auto load_manifest(const std::filesystem::path& dir)
       if (k == "file") e.file = v;
       else if (k == "seq") e.seq = std::stoull(v);
       else if (k == "start_lsn") e.start_lsn = std::stoull(v);
+      else if (k == "first_lsn") e.first_lsn = std::stoull(v);
       else if (k == "end_lsn") e.end_lsn = std::stoull(v);
       else if (k == "frames") e.frames = std::stoull(v);
       else if (k == "bytes") e.bytes = std::stoull(v);
     }
+    if (e.first_lsn == 0) e.first_lsn = e.start_lsn; // backward compat
     m.entries.push_back(std::move(e));
   }
   return m;
@@ -53,11 +59,16 @@ auto save_manifest(const std::filesystem::path& dir, const Manifest& m)
     out << "file=" << e.file
         << " seq=" << e.seq
         << " start_lsn=" << e.start_lsn
+        << " first_lsn=" << e.first_lsn
         << " end_lsn=" << e.end_lsn
         << " frames=" << e.frames
         << " bytes=" << e.bytes
         << "\n";
   }
+#if VESPER_ENABLE_MANIFEST_FSYNC
+  out.flush();
+  // No cross-platform fsync for ofstream; this is a guard placeholder. We intentionally skip actual fsync in tests.
+#endif
   return {};
 }
 
