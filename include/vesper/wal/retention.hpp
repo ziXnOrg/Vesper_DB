@@ -1,7 +1,7 @@
 #pragma once
 
 /** \file retention.hpp
- *  \brief WAL retention helpers (purge rotated files by LSN, count, or age).
+ *  \brief WAL retention helpers (purge rotated files by LSN, count, age, or size).
  */
 
 #include <expected>
@@ -22,6 +22,11 @@ auto purge_keep_last_n(const std::filesystem::path& dir, std::size_t keep_last_n
 // Keep files whose last_write_time >= cutoff_time; delete older ones
 // The caller provides cutoff_time to avoid wall-clock usage in tests.
 auto purge_keep_newer_than(const std::filesystem::path& dir, std::filesystem::file_time_type cutoff_time)
+    -> std::expected<void, vesper::core::error>;
+
+// Keep the newest files such that total bytes (from manifest) <= max_total_bytes
+// Deletes older files until the constraint is met, and updates the manifest.
+auto purge_keep_total_bytes_max(const std::filesystem::path& dir, std::uint64_t max_total_bytes)
     -> std::expected<void, vesper::core::error>;
 
 } // namespace vesper::wal

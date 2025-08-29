@@ -43,6 +43,8 @@ auto WalWriter::open(const WalWriterOptions& opts)
   w.prefix_ = opts.prefix;
   w.max_file_bytes_ = opts.max_file_bytes;
   w.strict_lsn_monotonic_ = opts.strict_lsn_monotonic;
+  w.fsync_on_rotation_ = opts.fsync_on_rotation;
+  w.fsync_on_flush_ = opts.fsync_on_flush;
   if (!std::filesystem::exists(w.dir_)) {
     std::error_code ec; std::filesystem::create_directories(w.dir_, ec);
     if (ec) return std::unexpected(error{error_code::io_failed, "mkdir failed", "wal.io"});
@@ -61,6 +63,7 @@ auto WalWriter::open(const WalWriterOptions& opts)
   w.seq_index_ = max_seq; // start from existing max; open_seq(++seq) before first append
   w.cur_bytes_ = 0; w.cur_frames_ = 0; w.cur_start_lsn_ = 0; w.cur_end_lsn_ = 0;
   w.prev_lsn_ = 0; w.have_prev_ = false;
+  w.stats_ = {};
   return w;
 }
 
@@ -82,7 +85,12 @@ static void upsert_manifest(const std::filesystem::path& dir, const vesper::wal:
 
 auto WalWriter::open_seq(std::uint64_t seq) -> std::expected<void, vesper::core::error> {
   using vesper::core::error; using vesper::core::error_code;
-  if (out_.is_open()) out_.close();
+  if (out_.is_open()) {
+    out_.flush();
+    if (fsync_on_rotation_) { stats_.syncs++; }
+    out_.close();
+    stats_.rotations++;
+  }
   seq_index_ = seq;
   std::ostringstream oss; oss << prefix_ << std::setw(8) << std::setfill('0') << seq << ".log";
   path_ = dir_ / oss.str();
@@ -96,6 +104,9 @@ auto WalWriter::maybe_rotate(std::size_t next_frame_bytes) -> std::expected<void
   if (max_file_bytes_ == 0) return {};
   if (!out_.is_open()) return open_seq(seq_index_ + 1);
   if (cur_bytes_ + next_frame_bytes > max_file_bytes_) {
+
+static inline bool type_enabled(std::uint32_t mask, std::uint16_t t){ return (mask & (1u << t)) != 0; }
+
     // Update manifest for the finished file
     ManifestEntry e{path_.filename().string(), seq_index_, cur_start_lsn_, cur_start_lsn_, cur_end_lsn_, cur_frames_, cur_bytes_};
     upsert_manifest(dir_, e);
@@ -123,7 +134,7 @@ auto WalWriter::append(std::uint64_t lsn, std::uint16_t type, std::span<const st
   out_.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
   if (!out_.good()) return std::unexpected(error{error_code::io_failed, "write failed", "wal.io"});
   cur_bytes_ += bytes.size();
-  cur_frames_ += 1;
+  cur_frames_ += 1; stats_.frames++;
   if (cur_start_lsn_ == 0) cur_start_lsn_ = lsn;
   cur_end_lsn_ = lsn;
   return {};
@@ -141,13 +152,13 @@ auto WalWriter::publish_snapshot(std::uint64_t last_lsn) -> std::expected<void, 
 auto WalWriter::flush(bool sync) -> std::expected<void, vesper::core::error> {
   using vesper::core::error; using vesper::core::error_code;
   if (!out_.good()) return std::unexpected(error{error_code::io_failed, "writer closed", "wal.io"});
-  out_.flush();
+  out_.flush(); stats_.flushes++;
+  if (sync || fsync_on_flush_) { stats_.syncs++; }
   // If rotating mode and we have an open file, upsert a manifest entry snapshot
   if (!dir_.empty() && out_.is_open() && cur_frames_ > 0) {
     ManifestEntry e{path_.filename().string(), seq_index_, cur_start_lsn_, cur_start_lsn_, cur_end_lsn_, cur_frames_, cur_bytes_};
     upsert_manifest(dir_, e);
   }
-  (void)sync; // fsync intentionally omitted for cross-platform determinism in tests
   return {};
 }
 
@@ -207,12 +218,20 @@ auto recover_scan(std::string_view p, std::function<void(const WalFrame&)> on_fr
       }
       prev_lsn = dec->lsn;
       have_prev = true;
+
+
     }
 
     on_frame(*dec);
   }
   return stats;
 }
+
+auto recover_scan_dir(const std::filesystem::path& dir, std::uint32_t type_mask, std::function<void(const WalFrame&)> on_frame)
+    -> std::expected<RecoveryStats, vesper::core::error> {
+  return recover_scan_dir(dir, [&](const WalFrame& f){ if (type_enabled(type_mask, f.type)) on_frame(f); });
+}
+
 
 auto recover_scan_dir(const std::filesystem::path& dir, std::function<void(const WalFrame&)> on_frame)
     -> std::expected<RecoveryStats, vesper::core::error> {
