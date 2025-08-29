@@ -40,5 +40,18 @@ auto save_manifest(const std::filesystem::path& dir, const Manifest& m)
 auto rebuild_manifest(const std::filesystem::path& dir)
     -> std::expected<Manifest, vesper::core::error>;
 
+// Manifest validation API (advisory by default; enforcement is optional and non-destructive)
+enum class ManifestIssueCode { OutOfOrderSeq, DuplicateFile, MissingFileOnDisk, ExtraFileOnDisk, SeqGap, Empty, BadHeader };
+enum class Severity { Warning, Error };
+struct ManifestIssue { ManifestIssueCode code; Severity severity; std::string file; std::uint64_t seq{}; std::string message; };
+struct ManifestValidation { bool ok{true}; std::vector<ManifestIssue> issues; };
+
+auto validate_manifest(const std::filesystem::path& dir)
+    -> std::expected<ManifestValidation, vesper::core::error>;
+
+auto enforce_manifest_order(const std::filesystem::path& dir)
+    -> std::expected<void, vesper::core::error>;
+
+
 } // namespace vesper::wal
 

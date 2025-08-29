@@ -78,6 +78,26 @@ ctest --test-dir build --output-on-failure -R "wal.*(replay|snapshot)"
 ## WAL stabilization summary (Phase 4)
 
 - Coverage added (deterministic, cross-platform):
+
+### Fsync + Replay Type Mask quick reference
+
+- WalWriterOptions knobs:
+  - fsync_on_rotation=true (increments writer.stats().syncs on rotation)
+  - fsync_on_flush=true (increments writer.stats().syncs on flush)
+- Example:
+  - wal::WalWriterOptions o{.dir=dir, .fsync_on_flush=true}; auto w = wal::WalWriter::open(o);
+  - REQUIRE(w->flush(false).has_value()); REQUIRE(w->stats().syncs >= 1);
+
+- Replay type mask:
+  - auto st = wal::recover_replay(dir, /*type_mask=*/((1u<<1)|(1u<<2)), cb);
+  - Only frames with type in {1,2} are delivered; stats reflect post-filter frames
+
+### Manifest validation quick reference
+
+- auto v = wal::validate_manifest(dir);
+- Issues may include: DuplicateFile, OutOfOrderSeq, MissingFileOnDisk (Error), ExtraFileOnDisk (Warning), SeqGap (Warning)
+- To order entries deterministically (non-destructive): REQUIRE(wal::enforce_manifest_order(dir).has_value());
+
   - Property tests: rotations + optional torn tail; non-monotonic LSN variant
   - Padding frames (type=3): ignored by monotonicity; tolerated by replay
   - Non-monotonic across rotation boundary

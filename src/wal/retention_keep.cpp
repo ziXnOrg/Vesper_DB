@@ -1,4 +1,6 @@
 #include "vesper/wal/retention.hpp"
+#include <numeric>
+
 #include "vesper/wal/manifest.hpp"
 
 #include <vector>
@@ -46,4 +48,39 @@ auto purge_keep_newer_than(const std::filesystem::path& dir, std::filesystem::fi
 }
 
 } // namespace vesper::wal
+
+auto purge_keep_total_bytes_max(const std::filesystem::path& dir, std::uint64_t max_total_bytes)
+    -> std::expected<void, vesper::core::error> {
+  using vesper::core::error; using vesper::core::error_code;
+  auto mx = load_manifest(dir);
+  if (!mx) return std::unexpected(mx.error());
+  Manifest m = *mx;
+  std::uint64_t acc = 0;
+  std::vector<std::size_t> keep_indices;
+  keep_indices.reserve(m.entries.size());
+  for (std::size_t i = m.entries.size(); i > 0; --i) {
+    const auto idx = i - 1;
+    const auto bytes = m.entries[idx].bytes;
+    if (acc + bytes > max_total_bytes && !keep_indices.empty()) break;
+    keep_indices.push_back(idx);
+    acc += bytes;
+  }
+  std::sort(keep_indices.begin(), keep_indices.end());
+
+  Manifest kept;
+  kept.entries.reserve(keep_indices.size());
+  std::size_t next = 0;
+  for (std::size_t i = 0; i < m.entries.size(); ++i) {
+    if (next < keep_indices.size() && i == keep_indices[next]) {
+      kept.entries.push_back(m.entries[i]);
+      ++next;
+    } else {
+      std::error_code ec; std::filesystem::remove(dir / m.entries[i].file, ec);
+      if (ec) return std::unexpected(error{error_code::io_failed, "remove failed", "wal.retention"});
+    }
+  }
+  if (auto sx = save_manifest(dir, kept); !sx) return std::unexpected(sx.error());
+  return {};
+}
+
 

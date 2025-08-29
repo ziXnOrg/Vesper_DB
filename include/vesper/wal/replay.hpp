@@ -31,5 +31,13 @@ using ReplayCallback = std::function<void(std::uint64_t lsn, std::uint16_t type,
 auto recover_replay(const std::filesystem::path& dir, ReplayCallback on_payload)
     -> std::expected<RecoveryStats, vesper::core::error>;
 
+
+/** \brief Replay overload with type mask: only deliver frames with (1u << type) & type_mask.
+ *  \ingroup wal_api
+ *  \note RecoveryStats reflect delivered frames post-filter.
+ */
+auto recover_replay(const std::filesystem::path& dir, std::uint32_t type_mask, ReplayCallback on_payload)
+    -> std::expected<RecoveryStats, vesper::core::error>;
+
 } // namespace vesper::wal
 
