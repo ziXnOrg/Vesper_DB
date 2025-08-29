@@ -1,4 +1,6 @@
 #include "vesper/wal/manifest.hpp"
+#include "vesper/wal/io.hpp" // recover_scan, WalFrame
+
 
 #include <fstream>
 #include <sstream>
@@ -72,5 +74,53 @@ auto save_manifest(const std::filesystem::path& dir, const Manifest& m)
   return {};
 }
 
+
 } // namespace vesper::wal
 
+
+#include <regex>
+#include <utility>
+#include <algorithm>
+#include <vector>
+
+namespace {
+using Pair = std::pair<std::uint64_t, std::filesystem::path>;
+static std::vector<Pair> list_sorted(const std::filesystem::path& dir, const std::string& prefix){
+  std::vector<Pair> v;
+  std::regex rx(std::string("^") + prefix + "([0-9]{8})\\.log$");
+  for (auto& de : std::filesystem::directory_iterator(dir)){
+    if (!de.is_regular_file()) continue; auto name=de.path().filename().string();
+    std::smatch m; if (std::regex_match(name, m, rx) && m.size()==2){
+      try { auto seq = static_cast<std::uint64_t>(std::stoull(m[1].str())); v.emplace_back(seq, de.path()); } catch(...) {}
+    }
+  }
+  std::sort(v.begin(), v.end(), [](auto&a, auto&b){ return a.first < b.first; });
+  return v;
+}
+}
+
+namespace vesper::wal {
+
+auto rebuild_manifest(const std::filesystem::path& dir)
+    -> std::expected<Manifest, vesper::core::error> {
+  using vesper::core::error; using vesper::core::error_code;
+  Manifest m{};
+  auto files = list_sorted(dir, "wal-");
+  for (auto& kv : files){
+    // Scan this file and accumulate stats
+    std::size_t frames=0; std::size_t bytes=0; std::uint64_t first_lsn=0; std::uint64_t last_lsn=0;
+    auto st = recover_scan(kv.second.string(), [&](const WalFrame& f){
+      frames++; bytes += f.len; if (first_lsn==0) first_lsn = f.lsn; last_lsn = f.lsn;
+    });
+    if (!st) return std::unexpected(st.error());
+    ManifestEntry e{};
+    e.file = kv.second.filename().string();
+    e.seq = kv.first;
+    e.start_lsn = first_lsn; e.first_lsn = first_lsn; e.end_lsn = last_lsn;
+    e.frames = frames; e.bytes = bytes;
+    m.entries.push_back(e);
+  }
+  return m;
+}
+
+} // namespace vesper::wal

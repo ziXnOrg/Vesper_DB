@@ -36,5 +36,9 @@ auto load_manifest(const std::filesystem::path& dir)
 auto save_manifest(const std::filesystem::path& dir, const Manifest& m)
     -> std::expected<void, vesper::core::error>;
 
+// Rebuild a manifest by scanning wal-*.log files in the directory (sorted by sequence)
+auto rebuild_manifest(const std::filesystem::path& dir)
+    -> std::expected<Manifest, vesper::core::error>;
+
 } // namespace vesper::wal
 
