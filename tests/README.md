@@ -44,6 +44,41 @@ ctest --test-dir build --output-on-failure -R "wal.*(replay|snapshot)"
 
 ## Test helpers
 
-- Prefer using tests/support/wal_replay_helpers.* to reconstruct baseline (≤cutoff) and apply replay (>cutoff) in WAL replay tests.
-- For wal.manifest read/modify/write in tests, use tests/support/manifest_test_helpers.* (read_manifest_entries, write_manifest_entries, entries_* transforms, list_wal_files_sorted). Avoid duplicating parsing/rewrites.
+- wal_replay_helpers.*
+  - Purpose: reconstruct baseline (LSN ≤ cutoff) via per-file scan and apply replay (LSN > cutoff)
+  - Example:
+    - ToyIndex idx = test_support::build_toy_index_baseline_then_replay(dir, cutoff);
+
+- manifest_test_helpers.*
+  - Purpose: deterministic wal.manifest read/write and simple transforms
+  - Common APIs:
+    - auto lines = manifest_test_helpers::read_manifest_entries(manifest);
+    - manifest_test_helpers::write_manifest_entries(manifest, lines);
+    - auto files = manifest_test_helpers::list_wal_files_sorted(dir);
+    - auto kept = manifest_test_helpers::entries_without_filename(lines, files.back().second.filename().string());
+  - Avoid duplicating parsing/rewrites in tests; keep logic declarative.
+
+
+## WAL stabilization summary (Phase 4)
+
+- Coverage added (deterministic, cross-platform):
+  - Property tests: rotations + optional torn tail; non-monotonic LSN variant
+  - Padding frames (type=3): ignored by monotonicity; tolerated by replay
+  - Non-monotonic across rotation boundary
+  - Stale manifest scanning: highest-seq file included even if unlisted
+  - Perf sanity: recover_scan_dir scales ~O(N) (ratio ≤ 3)
+  - Error propagation: data_integrity on non-last corruption; io on missing file; torn tail on last tolerated
+  - Purge: file-boundary cutoffs; stale-manifest parity; idempotency
+  - Helpers: wal_replay_helpers.*, manifest_test_helpers.* (refactors removed duplication)
+
+- Quick subsets (copy/paste):
+  - ctest --test-dir build --output-on-failure -R "wal|replay|manifest|snapshot|purge|errors|padding|roundtrip|boundaries|perf"
+  - ctest --test-dir build --output-on-failure -R "wal_property_replay_test|property"
+
+- Validation commands:
+  - cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --config Release -j
+  - ctest --test-dir build --output-on-failure
+  - ctest --test-dir build --output-on-failure -R "wal|replay|manifest|snapshot|purge|errors|padding|roundtrip|boundaries|perf"
+
+- No production behavior or API/ABI changes
 
