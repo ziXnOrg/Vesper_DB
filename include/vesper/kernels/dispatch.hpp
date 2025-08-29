@@ -1,0 +1,27 @@
+#pragma once
+
+/** \file dispatch.hpp
+ *  \brief SIMD-ready kernel interface and dispatcher. Scalar is the default backend.
+ *
+ * Preconditions for all ops: a.size() == b.size() > 0; inputs finite; for cosine, norms > 0.
+ * Determinism: pure functions, O(d) complexity; no allocations; no exceptions on hot paths.
+ */
+
+#include <cstddef>
+#include <span>
+#include <string_view>
+
+namespace vesper::kernels {
+
+struct KernelOps {
+  float (*l2_sq)(std::span<const float>, std::span<const float>) noexcept;
+  float (*inner_product)(std::span<const float>, std::span<const float>) noexcept;
+  float (*cosine_similarity)(std::span<const float>, std::span<const float>) noexcept;
+  float (*cosine_distance)(std::span<const float>, std::span<const float>) noexcept;
+};
+
+// Returns a stable reference valid for the process lifetime. "scalar" is the only backend in this PR.
+inline const KernelOps& select_backend(std::string_view name = "scalar") noexcept;
+
+} // namespace vesper::kernels
+
