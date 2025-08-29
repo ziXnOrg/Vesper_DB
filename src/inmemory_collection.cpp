@@ -9,6 +9,11 @@
 #include "vesper/filter_eval.hpp"
 #include "inmemory_index.hpp"
 
+#if VESPER_ENABLE_KERNEL_DISPATCH
+#include "vesper/kernels/dispatch.hpp"
+#include "vesper/kernels/backends/scalar.hpp"
+#endif
+
 namespace vesper {
 
 struct collection_impl {
@@ -54,9 +59,17 @@ auto collection::search(const float* q, std::size_t dim, const search_params& p,
   std::vector<std::uint64_t> candidates = filter_eval::apply_filter(fexpr, views);
 
   std::vector<search_result> out; out.reserve(std::min<std::size_t>(p.k, candidates.size()));
+
+#if VESPER_ENABLE_KERNEL_DISPATCH
+  const auto& ops = kernels::select_backend_auto();
+  auto score_l2 = [&](const std::vector<float>& v){ return ops.l2_sq(qv, v); };
+  auto score_ip = [&](const std::vector<float>& v){ return -ops.inner_product(qv, v); }; // lower is better
+  auto score_cos = [&](const std::vector<float>& v){ return 1.0f - ops.cosine_similarity(qv, v); }; // distance form
+#else
   auto score_l2 = [&](const std::vector<float>& v){ return kernels::l2_sq(qv, v); };
   auto score_ip = [&](const std::vector<float>& v){ return -kernels::inner_product(qv, v); }; // lower is better
   auto score_cos = [&](const std::vector<float>& v){ return 1.0f - kernels::cosine_similarity(qv, v); }; // distance form
+#endif
 
   auto scorer = score_l2;
   if (p.metric == "ip")      scorer = score_ip;

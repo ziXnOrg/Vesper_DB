@@ -13,6 +13,15 @@ elseif (MSVC)
   target_compile_options(vesper_headers INTERFACE /W4)
 endif()
 
+
+# Build option: guarded dispatcher integration (default OFF)
+option(VESPER_ENABLE_KERNEL_DISPATCH "Enable kernel dispatcher in in-memory search" OFF)
+if (VESPER_ENABLE_KERNEL_DISPATCH)
+  add_compile_definitions(VESPER_ENABLE_KERNEL_DISPATCH=1)
+else()
+  add_compile_definitions(VESPER_ENABLE_KERNEL_DISPATCH=0)
+endif()
+
 # Library (minimal in-memory impl) to prove linkage in CI
 add_library(vesper_core STATIC src/inmemory_collection.cpp src/filter_eval.cpp)
 target_link_libraries(vesper_core PRIVATE vesper_headers)
