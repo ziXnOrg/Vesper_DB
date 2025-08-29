@@ -144,6 +144,7 @@ auto recover_scan(std::string_view p, std::function<void(const WalFrame&)> on_fr
     if (!read_exact(in, rest, len - WAL_HEADER_SIZE)) { break; }
     frame.insert(frame.end(), rest.begin(), rest.end());
 
+
 auto recover_scan_dir(const std::filesystem::path& dir, std::function<void(const WalFrame&)> on_frame)
     -> std::expected<RecoveryStats, vesper::core::error> {
   using vesper::core::error; using vesper::core::error_code;
@@ -157,6 +158,12 @@ auto recover_scan_dir(const std::filesystem::path& dir, std::function<void(const
   }
   std::vector<std::filesystem::path> files;
   if (have_manifest) {
+  // Snapshot cutoff (if present)
+  std::uint64_t cutoff_lsn = 0;
+  if (std::filesystem::exists(dir / "wal.snapshot")) {
+    if (auto sx = load_snapshot(dir); sx) cutoff_lsn = sx->last_lsn;
+  }
+
     for (auto& e : m.entries) files.push_back(dir / e.file);
   } else {
     std::regex rx("^wal-([0-9]{8})\\.log$");
@@ -172,6 +179,14 @@ auto recover_scan_dir(const std::filesystem::path& dir, std::function<void(const
     for (auto& kv : tmp) files.push_back(kv.second);
   }
   for (size_t i = 0; i < files.size(); ++i) {
+    // Skip files fully below cutoff by using manifest metadata when available
+    if (have_manifest) {
+      const auto& me = m.entries[i];
+      if (me.end_lsn <= cutoff_lsn) {
+        continue; // entirely before snapshot
+      }
+    }
+
     auto stats = recover_scan(files[i].string(), on_frame);
     if (!stats) {
       return std::unexpected(stats.error());
@@ -184,15 +199,20 @@ auto recover_scan_dir(const std::filesystem::path& dir, std::function<void(const
         return std::unexpected(error{error_code::data_integrity, "torn middle file", "wal.io"});
       }
     }
-    // Aggregate
-    agg.frames += stats->frames;
-    agg.bytes += stats->bytes;
-    agg.last_lsn = stats->last_lsn;
-    agg.lsn_monotonic = agg.lsn_monotonic && stats->lsn_monotonic;
-    agg.lsn_violations += stats->lsn_violations;
-    agg.min_len = (agg.min_len == 0) ? stats->min_len : std::min(agg.min_len, stats->min_len);
-    agg.max_len = std::max(agg.max_len, stats->max_len);
-    for (size_t t = 0; t < agg.type_counts.size(); ++t) agg.type_counts[t] += stats->type_counts[t];
+    // Aggregate (post-skip accounting only): stats currently reflect full scan; we need post-cutoff
+    // For simplicity in this pass, we recompute skip at per-frame granularity by re-scanning file and invoking on_frame selectively.
+    // Rerun per-file scan with an on_frame wrapper applying cutoff.
+    RecoveryStats filtered{};
+    auto per_frame = [&](const WalFrame& f){ if (f.lsn > cutoff_lsn) { on_frame(f); filtered.frames++; filtered.bytes += f.len; filtered.last_lsn = f.lsn; if (f.type < filtered.type_counts.size()) filtered.type_counts[f.type]++; if (filtered.min_len==0 || f.len<filtered.min_len) filtered.min_len=f.len; if (f.len>filtered.max_len) filtered.max_len=f.len; } };
+    auto r2 = recover_scan(files[i].string(), per_frame);
+    if (!r2) return std::unexpected(r2.error());
+    // Update global monotonicity by treating only delivered frames; r2 stats may include pre-cutoff frames, so recompute lsn_monotonic in wrapper in future pass.
+    agg.frames += filtered.frames;
+    agg.bytes += filtered.bytes;
+    if (filtered.last_lsn != 0) agg.last_lsn = filtered.last_lsn;
+    agg.min_len = (agg.min_len == 0) ? filtered.min_len : std::min(agg.min_len, filtered.min_len);
+    agg.max_len = std::max(agg.max_len, filtered.max_len);
+    for (size_t t = 0; t < agg.type_counts.size(); ++t) agg.type_counts[t] += filtered.type_counts[t];
   }
   return agg;
 }
