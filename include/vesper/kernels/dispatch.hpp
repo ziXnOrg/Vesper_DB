@@ -20,8 +20,13 @@ struct KernelOps {
   float (*cosine_distance)(std::span<const float>, std::span<const float>) noexcept;
 };
 
-// Returns a stable reference valid for the process lifetime. "scalar" is the only backend in this PR.
+// Returns a stable reference valid for the process lifetime. "scalar" is the default backend.
 inline const KernelOps& select_backend(std::string_view name = "scalar") noexcept;
+
+/** \brief Auto-selects a kernel backend. Stub that currently returns the scalar backend.
+ *  Thread-safe initialization and stable reference semantics apply.
+ */
+inline const KernelOps& select_backend_auto() noexcept;
 
 } // namespace vesper::kernels
 
