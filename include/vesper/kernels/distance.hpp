@@ -3,7 +3,10 @@
 /** \file distance.hpp
  *  \brief Scalar reference distance kernels (L2^2, Inner Product, Cosine).
  *
- * Preconditions: a.size() == b.size() > 0; inputs are finite; for cosine, norms > 0.
+ * Preconditions
+ * - a.size() == b.size() > 0
+ * - All inputs are finite
+ * - For cosine: norms must be strictly positive (||a|| > 0 and ||b|| > 0); behavior is undefined otherwise
  * Determinism: pure functions, no allocations, no exceptions on hot paths.
  */
 
@@ -13,7 +16,7 @@
 
 namespace vesper::kernels {
 
-/** \brief Sum of squared differences: sum((a[i] - b[i])^2). */
+/** \brief Sum of squared differences: sum((a[i] - b[i])^2). O(d). */
 inline float l2_sq(std::span<const float> a, std::span<const float> b) {
   const std::size_t n = a.size();
   float s = 0.0f;
@@ -24,7 +27,7 @@ inline float l2_sq(std::span<const float> a, std::span<const float> b) {
   return s;
 }
 
-/** \brief Inner product: sum(a[i] * b[i]). */
+/** \brief Inner product: sum(a[i] * b[i]). O(d). */
 inline float inner_product(std::span<const float> a, std::span<const float> b) {
   const std::size_t n = a.size();
   float s = 0.0f;
@@ -32,7 +35,7 @@ inline float inner_product(std::span<const float> a, std::span<const float> b) {
   return s;
 }
 
-/** \brief Cosine similarity: (a·b) / (||a|| * ||b||). Norms must be > 0. */
+/** \brief Cosine similarity: (a·b) / (||a|| * ||b||). Norms must be > 0. O(d). */
 inline float cosine_similarity(std::span<const float> a, std::span<const float> b) {
   const std::size_t n = a.size();
   float dot = 0.0f, na2 = 0.0f, nb2 = 0.0f;
@@ -44,7 +47,7 @@ inline float cosine_similarity(std::span<const float> a, std::span<const float> 
   return dot / denom; // UB if denom==0 per preconditions
 }
 
-/** \brief Cosine distance defined as 1 - cosine_similarity(a,b). */
+/** \brief Cosine distance defined as 1 - cosine_similarity(a,b). O(d). */
 inline float cosine_distance(std::span<const float> a, std::span<const float> b) {
   return 1.0f - cosine_similarity(a, b);
 }
