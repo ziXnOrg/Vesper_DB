@@ -92,6 +92,7 @@ auto recover_scan(std::string_view path, std::function<void(const WalFrame&)> on
     -> std::expected<RecoveryStats, vesper::core::error>;
 
 // Scan a directory of rotated WAL files (manifest-aware). Aggregates stats across files.
+// Snapshot semantics: if wal.snapshot exists and parses, frames with lsn <= snapshot.last_lsn are skipped.
 auto recover_scan_dir(const std::filesystem::path& dir, std::function<void(const WalFrame&)> on_frame)
     -> std::expected<RecoveryStats, vesper::core::error>;
 
