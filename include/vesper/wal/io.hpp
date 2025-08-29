@@ -25,7 +25,9 @@
 
 namespace vesper::wal {
 
-/** \brief Statistics gathered during recovery scan. */
+/** \brief Statistics gathered during recovery scan.
+ *  \ingroup wal_api
+ */
 struct RecoveryStats {
   std::size_t frames{};             /**< number of valid frames visited */
   std::size_t bytes{};              /**< total bytes of valid frames */

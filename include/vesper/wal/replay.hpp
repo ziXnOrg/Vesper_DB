@@ -16,10 +16,18 @@
 
 namespace vesper::wal {
 
-// Replays frames' payloads post-snapshot cutoff in order across rotated files.
-// on_payload is invoked with (lsn, type, payload) for each delivered frame.
+/** \brief Callback invoked for each delivered frame during replay.
+ *  \ingroup wal_api
+ *  \param lsn     Frame log sequence number (strictly > snapshot cutoff)
+ *  \param type    Frame type (1=data, 2=commit, 3=padding)
+ *  \param payload Frame payload bytes
+ */
 using ReplayCallback = std::function<void(std::uint64_t lsn, std::uint16_t type, std::span<const std::uint8_t> payload)>;
 
+/** \brief Replays frames' payloads post-snapshot cutoff across rotated files.
+ *  \ingroup wal_api
+ *  \return Aggregated RecoveryStats for delivered frames or error
+ */
 auto recover_replay(const std::filesystem::path& dir, ReplayCallback on_payload)
     -> std::expected<RecoveryStats, vesper::core::error>;
 
