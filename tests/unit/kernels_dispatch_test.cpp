@@ -6,6 +6,8 @@
 
 using namespace vesper::kernels;
 
+using Catch::Approx;
+
 static void make_nonzero(std::vector<float>& v, std::mt19937& rng){
   std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
   do { for (auto& x : v) x = dist(rng); } while (std::all_of(v.begin(), v.end(), [](float x){return x==0.0f;}));

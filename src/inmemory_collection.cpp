@@ -71,14 +71,14 @@ auto collection::search(const float* q, std::size_t dim, const search_params& p,
   auto score_cos = [&](const std::vector<float>& v){ return 1.0f - kernels::cosine_similarity(qv, v); }; // distance form
 #endif
 
-  auto scorer = score_l2;
-  if (p.metric == "ip")      scorer = score_ip;
-  else if (p.metric == "cosine") scorer = score_cos;
+  int mode = 0; // 0=l2, 1=ip, 2=cosine
+  if (p.metric == "ip") mode = 1;
+  else if (p.metric == "cosine") mode = 2;
 
   for (auto id : candidates) {
     auto it = impl->idx->store.find(id);
     if (it == impl->idx->store.end()) continue;
-    float d = scorer(it->second.vec);
+    float d = (mode==0)? score_l2(it->second.vec) : (mode==1? score_ip(it->second.vec) : score_cos(it->second.vec));
     out.push_back({id, d});
   }
   std::sort(out.begin(), out.end(), [](auto& a, auto& b){ if (a.score == b.score) return a.id < b.id; return a.score < b.score; });

@@ -10,5 +10,4 @@ static void BM_CreateSearchParams(benchmark::State& state) {
 BENCHMARK(BM_CreateSearchParams);
 
 BENCHMARK_MAIN();
-int main(){ std::cout << "bench placeholder" << std::endl; return 0; }
 

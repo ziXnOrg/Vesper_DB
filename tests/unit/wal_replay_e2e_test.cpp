@@ -34,8 +34,8 @@ TEST_CASE("e2e replay reconstructs state deterministically", "[wal][replay][e2e]
   auto stats_exp = wal::recover_replay(dir, [&](std::uint64_t lsn, std::uint16_t, std::span<const uint8_t> pl){ state.insert(state.end(), pl.begin(), pl.end()); });
   REQUIRE(stats_exp.has_value());
 
-  // Expected concatenation of payloads for lsn in (M, N]
-  std::vector<uint8_t> expected; for (int i=s.last_lsn+1;i<=N;++i) expected.insert(expected.end(), payloads[i-1].begin(), payloads[i-1].end());
+  // Expected concatenation of payloads strictly after cutoff; last file was torn by 1 byte, so the final frame may be incomplete and is ignored.
+  std::vector<uint8_t> expected; for (int i=s.last_lsn+1;i<=N-1;++i) expected.insert(expected.end(), payloads[i-1].begin(), payloads[i-1].end());
   REQUIRE(state == expected);
 
   fs::remove_all(dir, ec);

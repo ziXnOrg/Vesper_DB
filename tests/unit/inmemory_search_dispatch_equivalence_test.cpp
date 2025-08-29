@@ -3,6 +3,8 @@
 #include <vesper/kernels/distance.hpp>
 
 using namespace vesper;
+using Catch::Approx;
+
 
 static auto make_collection() {
   auto col = collection::open(""); REQUIRE(col.has_value());
@@ -13,11 +15,11 @@ static auto make_collection() {
   return c;
 }
 
-static std::vector<collection::search_result> expected_results(const std::vector<float>& qv, const std::string& metric) {
+static std::vector<search_result> expected_results(const std::vector<float>& qv, const std::string& metric) {
   std::vector<std::pair<std::uint64_t, std::vector<float>>> docs{
     {100, {1.0f, 2.0f}}, {101, {0.0f, 1.0f}}, {102, {5.0f, 6.0f}}
   };
-  std::vector<collection::search_result> out;
+  std::vector<search_result> out;
   for (auto& d : docs) {
     float s = 0.0f;
     if (metric == "ip") s = -kernels::inner_product(qv, d.second);
@@ -35,7 +37,7 @@ TEST_CASE("dispatcher integration equivalence for l2/ip/cosine", "[search][dispa
     std::vector<float> qv{1.0f, 1.0f};
     auto exp = expected_results(qv, metric);
 
-    collection::search_params p; p.k = 3; p.metric = metric;
+    search_params p; p.k = 3; p.metric = metric;
     auto got = c.search(qv.data(), qv.size(), p, nullptr);
     REQUIRE(got.has_value());
     REQUIRE(got->size() == exp.size());

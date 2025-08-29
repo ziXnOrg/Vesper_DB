@@ -2,10 +2,12 @@
 #include <vesper/wal/io.hpp>
 #include <vesper/wal/replay.hpp>
 #include <filesystem>
-#include "tests/support/replayer_payload.hpp"
+#include <tests/support/replayer_payload.hpp>
 
 using namespace vesper;
 using namespace test_support;
+
+using Catch::Approx;
 
 static void append_upsert(wal::WalWriter& w, std::uint64_t lsn, std::uint64_t id, std::initializer_list<std::pair<std::string,std::string>> tags, std::initializer_list<float> vec){
   std::vector<float> v(vec); auto payload = make_upsert(id, v, tags); REQUIRE(w.append(lsn, 1, payload).has_value()); }
@@ -52,6 +54,19 @@ TEST_CASE("toy replayer with snapshot cutoff", "[wal][replay][toy]"){
   REQUIRE(w->publish_snapshot(2).has_value());
 
   ToyIndex idx;
+  // Reconstruct baseline snapshot state by applying frames up to and including cutoff
+  const std::uint64_t cutoff = 2;
+  std::vector<std::pair<std::uint64_t, std::filesystem::path>> files;
+  for (auto& de : fs::directory_iterator(dir)){
+    if (!de.is_regular_file()) continue; auto name = de.path().filename().string();
+    if (name.rfind("wal-", 0)==0) { auto seq = std::stoull(name.substr(4,8)); files.emplace_back(seq, de.path()); }
+  }
+  std::sort(files.begin(), files.end(), [](auto& a, auto& b){ return a.first < b.first; });
+  for (auto& kv : files){
+    auto st0 = wal::recover_scan(kv.second.string(), [&](const wal::WalFrame& f){ if (f.lsn <= cutoff) apply_frame_payload(f.payload, idx); });
+    REQUIRE(st0.has_value());
+  }
+  // Now replay frames strictly after cutoff
   auto st = wal::recover_replay(dir, [&](std::uint64_t, std::uint16_t, std::span<const std::uint8_t> pl){ apply_frame_payload(pl, idx); });
   REQUIRE(st.has_value());
   REQUIRE(idx.count(201) == 1);
