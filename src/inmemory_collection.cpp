@@ -13,6 +13,7 @@
 #include "vesper/kernels/dispatch.hpp"
 #include "vesper/kernels/backends/scalar.hpp"
 #endif
+#include "vesper/kernels/distance.hpp"
 
 namespace vesper {
 
@@ -66,9 +67,9 @@ auto collection::search(const float* q, std::size_t dim, const search_params& p,
   auto score_ip = [&](const std::vector<float>& v){ return -ops.inner_product(qv, v); }; // lower is better
   auto score_cos = [&](const std::vector<float>& v){ return 1.0f - ops.cosine_similarity(qv, v); }; // distance form
 #else
-  auto score_l2 = [&](const std::vector<float>& v){ return kernels::l2_sq(qv, v); };
-  auto score_ip = [&](const std::vector<float>& v){ return -kernels::inner_product(qv, v); }; // lower is better
-  auto score_cos = [&](const std::vector<float>& v){ return 1.0f - kernels::cosine_similarity(qv, v); }; // distance form
+  auto score_l2 = [&](const std::vector<float>& v){ return vesper::kernels::l2_sq(qv, v); };
+  auto score_ip = [&](const std::vector<float>& v){ return -vesper::kernels::inner_product(qv, v); }; // lower is better
+  auto score_cos = [&](const std::vector<float>& v){ return 1.0f - vesper::kernels::cosine_similarity(qv, v); }; // distance form
 #endif
 
   int mode = 0; // 0=l2, 1=ip, 2=cosine

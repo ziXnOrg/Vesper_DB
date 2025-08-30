@@ -22,6 +22,8 @@
 
 #include "vesper/error.hpp"
 #include "vesper/wal/frame.hpp"
+#include "vesper/wal/snapshot.hpp"
+#include "vesper/wal/retention.hpp"
 
 namespace vesper::wal {
 
