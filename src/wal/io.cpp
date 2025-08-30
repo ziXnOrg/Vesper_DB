@@ -10,6 +10,10 @@
 
 #include <algorithm>
 
+namespace {
+static inline bool type_enabled(std::uint32_t mask, std::uint16_t t){ return (mask & (1u << t)) != 0; }
+}
+
 namespace vesper::wal {
 
 WalWriter::~WalWriter(){ if (out_.is_open()) out_.close(); }
@@ -104,8 +108,6 @@ auto WalWriter::maybe_rotate(std::size_t next_frame_bytes) -> std::expected<void
   if (max_file_bytes_ == 0) return {};
   if (!out_.is_open()) return open_seq(seq_index_ + 1);
   if (cur_bytes_ + next_frame_bytes > max_file_bytes_) {
-
-static inline bool type_enabled(std::uint32_t mask, std::uint16_t t){ return (mask & (1u << t)) != 0; }
 
     // Update manifest for the finished file
     ManifestEntry e{path_.filename().string(), seq_index_, cur_start_lsn_, cur_start_lsn_, cur_end_lsn_, cur_frames_, cur_bytes_};
@@ -331,12 +333,32 @@ auto recover_scan_dir(const std::filesystem::path& dir, std::function<void(const
     agg.bytes += filtered.bytes;
     if (filtered.last_lsn != 0) agg.last_lsn = filtered.last_lsn;
     agg.min_len = (agg.min_len == 0) ? filtered.min_len : std::min(agg.min_len, filtered.min_len);
+
+
     agg.max_len = std::max(agg.max_len, filtered.max_len);
     for (size_t t = 0; t < agg.type_counts.size(); ++t) agg.type_counts[t] += filtered.type_counts[t];
     if (!filtered.lsn_monotonic) { agg.lsn_monotonic = false; }
     agg.lsn_violations += filtered.lsn_violations;
   }
   return agg;
+}
+
+
+auto recover_scan_dir(const std::filesystem::path& dir, const DeliveryLimits& limits, std::function<void(const WalFrame&)> on_frame)
+    -> std::expected<RecoveryStats, vesper::core::error> {
+  const std::uint64_t cutoff = limits.cutoff_lsn;
+  const std::uint32_t mask = limits.type_mask;
+  const std::size_t maxf = limits.max_frames;
+  const std::size_t maxb = limits.max_bytes;
+  std::size_t delivered_b = 0;
+  std::size_t delivered_f = 0;
+  return recover_scan_dir(dir, [&](const WalFrame& f){
+    if (cutoff > 0 && f.lsn <= cutoff) return;
+    if (!type_enabled(mask, f.type)) return;
+    if (maxf > 0 && delivered_f >= maxf) return;
+    if (maxb > 0 && (delivered_b + f.len) > maxb) return;
+    delivered_f++; delivered_b += f.len; on_frame(f);
+  });
 }
 
 } // namespace vesper::wal
