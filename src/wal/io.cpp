@@ -47,8 +47,18 @@ auto WalWriter::open(const WalWriterOptions& opts)
   w.prefix_ = opts.prefix;
   w.max_file_bytes_ = opts.max_file_bytes;
   w.strict_lsn_monotonic_ = opts.strict_lsn_monotonic;
-  w.fsync_on_rotation_ = opts.fsync_on_rotation;
-  w.fsync_on_flush_ = opts.fsync_on_flush;
+  // map durability profile to knobs if provided
+  if (opts.durability_profile.has_value()) {
+    switch (*opts.durability_profile) {
+      case DurabilityProfile::None: w.fsync_on_rotation_ = false; w.fsync_on_flush_ = false; break;
+      case DurabilityProfile::Rotation: w.fsync_on_rotation_ = true; w.fsync_on_flush_ = false; break;
+      case DurabilityProfile::Flush: w.fsync_on_rotation_ = false; w.fsync_on_flush_ = true; break;
+      case DurabilityProfile::RotationAndFlush: w.fsync_on_rotation_ = true; w.fsync_on_flush_ = true; break;
+    }
+  } else {
+    w.fsync_on_rotation_ = opts.fsync_on_rotation;
+    w.fsync_on_flush_ = opts.fsync_on_flush;
+  }
   if (!std::filesystem::exists(w.dir_)) {
     std::error_code ec; std::filesystem::create_directories(w.dir_, ec);
     if (ec) return std::unexpected(error{error_code::io_failed, "mkdir failed", "wal.io"});

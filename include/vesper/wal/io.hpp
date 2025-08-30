@@ -44,6 +44,8 @@ struct RecoveryStats {
   std::size_t frames{};             /**< number of valid frames visited */
   std::size_t bytes{};              /**< total bytes of valid frames */
   std::uint64_t last_lsn{};         /**< LSN of the last valid frame */
+
+
   bool lsn_monotonic{true};         /**< strictly increasing LSN for TYPE in {1,2} */
   std::size_t lsn_violations{};     /**< count of non-monotonic transitions */
   std::uint32_t min_len{0};         /**< minimum LEN among valid frames (0 if no frames) */
@@ -62,6 +64,10 @@ struct WalWriterStats {
 
 
 /** \brief Rotation/open options for WAL writer. */
+
+/** Durability profiles map to fsync knobs (stats-only; no OS fsync). */
+enum class DurabilityProfile { None, Rotation, Flush, RotationAndFlush };
+
 struct WalWriterOptions {
   std::filesystem::path dir;     /**< directory to place wal-*.log files */
   std::string prefix{"wal-"};   /**< file prefix */
@@ -69,6 +75,7 @@ struct WalWriterOptions {
   bool strict_lsn_monotonic{false}; /**< if true, enforce strictly increasing LSN for TYPE in {1,2} */
   bool fsync_on_rotation{false};     /**< if true, issue a sync when rotating files (portable no-op in tests) */
   bool fsync_on_flush{false};        /**< if true, issue a sync on flush() (portable no-op in tests) */
+  std::optional<DurabilityProfile> durability_profile; /**< optional alias to map to fsync knobs */
 };
 
 class WalWriter {
