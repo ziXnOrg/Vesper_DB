@@ -124,6 +124,22 @@ ctest --test-dir build --output-on-failure -R "wal.*(replay|snapshot)"
   - ctest --test-dir build --output-on-failure -R "wal|replay|manifest|snapshot|purge|errors|padding|roundtrip|boundaries|perf"
   - ctest --test-dir build --output-on-failure -R "wal_property_replay_test|property"
 
+### Durability profiles quick reference
+
+- Use WalWriterOptions::durability_profile to select stats-only sync behavior:
+  - None, Rotation, Flush, RotationAndFlush
+- Example:
+  - wal::WalWriterOptions o{.dir=dir, .durability_profile = wal::DurabilityProfile::Rotation};
+
+### Replay checkpoint quick reference
+
+- File format: dir/wal.checkpoints/<consumer>.ckpt with line: last_lsn=<uint64>
+- API:
+  - auto st = wal::checkpoint::replay_from_checkpoint(dir, "consumerA", (1u<<1)|(1u<<2), cb);
+- Run subsets:
+  - ctest --test-dir build --output-on-failure -R "durability|checkpoint|replay"
+
+
 - Validation commands:
   - cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --config Release -j
   - ctest --test-dir build --output-on-failure
