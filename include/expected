@@ -1,0 +1,89 @@
+#pragma once
+// Minimal polyfill for std::expected for C++20 builds.
+// Provides only the subset used in this project. Not a full conformance impl.
+
+#include <optional>
+#include <utility>
+#include <type_traits>
+#include <memory>
+
+namespace std {
+
+// unexpected<E>
+template <class E>
+class unexpected {
+  E error_;
+public:
+  constexpr explicit unexpected(E e) : error_(std::move(e)) {}
+  constexpr const E& error() const & noexcept { return error_; }
+  constexpr E&       error()       & noexcept { return error_; }
+  constexpr E&&      error()      && noexcept { return std::move(error_); }
+};
+// CTAD
+template <class E>
+unexpected(E) -> unexpected<E>;
+
+// expected<T, E>
+template <class T, class E>
+class expected {
+  bool has_ = false;
+  std::optional<T> val_{};
+  std::optional<E> err_{};
+public:
+  // value constructors
+  constexpr expected(const T& v) : has_(true), val_(v) {}
+  constexpr expected(T&& v)      : has_(true), val_(std::move(v)) {}
+
+  // from unexpected
+  constexpr expected(const unexpected<E>& u) : has_(false), err_(u.error()) {}
+  constexpr expected(unexpected<E>&& u)      : has_(false), err_(std::move(u.error())) {}
+
+  // default copy/move/dtor
+  expected() = delete;
+  expected(const expected&) = default;
+  expected(expected&&) noexcept = default;
+  expected& operator=(const expected&) = default;
+  expected& operator=(expected&&) noexcept = default;
+  ~expected() = default;
+
+  // observers
+  constexpr bool has_value() const noexcept { return has_; }
+  constexpr explicit operator bool() const noexcept { return has_; }
+
+  // value access
+  constexpr T&       value()       &  { return *val_; }
+  constexpr const T& value() const &  { return *val_; }
+  constexpr T&&      value()       && { return std::move(*val_); }
+
+  // pointer-like
+  constexpr T* operator->() noexcept { return std::addressof(*val_); }
+  constexpr const T* operator->() const noexcept { return std::addressof(*val_); }
+  constexpr T& operator*() & { return *val_; }
+  constexpr const T& operator*() const & { return *val_; }
+
+  // error access
+  constexpr E&       error()       &  { return *err_; }
+  constexpr const E& error() const &  { return *err_; }
+  constexpr E&&      error()       && { return std::move(*err_); }
+};
+
+// expected<void, E>
+template <class E>
+class expected<void, E> {
+  bool has_ = true;
+  std::optional<E> err_{};
+public:
+  constexpr expected() = default; // success
+  constexpr expected(const unexpected<E>& u) : has_(false), err_(u.error()) {}
+  constexpr expected(unexpected<E>&& u)      : has_(false), err_(std::move(u.error())) {}
+
+  constexpr bool has_value() const noexcept { return has_; }
+  constexpr explicit operator bool() const noexcept { return has_; }
+
+  constexpr E&       error()       &  { return *err_; }
+  constexpr const E& error() const &  { return *err_; }
+  constexpr E&&      error()       && { return std::move(*err_); }
+};
+
+} // namespace std
+

@@ -1,15 +1,20 @@
 cmake_minimum_required(VERSION 3.24)
 project(vesper LANGUAGES C CXX)
 
+# Enforce C++20 globally
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
 # Header-only interface target to compile public headers with -pedantic
 add_library(vesper_headers INTERFACE)
 target_include_directories(vesper_headers INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 if (CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR CMAKE_CXX_COMPILER_ID MATCHES "GNU")
-  target_compile_features(vesper_headers INTERFACE cxx_std_23)
+  target_compile_features(vesper_headers INTERFACE cxx_std_20)
   target_compile_options(vesper_headers INTERFACE -Wall -Wextra -Wpedantic)
 elseif (MSVC)
-  target_compile_features(vesper_headers INTERFACE cxx_std_23)
+  target_compile_features(vesper_headers INTERFACE cxx_std_20)
   target_compile_options(vesper_headers INTERFACE /W4)
 endif()
 
@@ -58,10 +63,10 @@ if (VESPER_ENABLE_TESTS)
   target_include_directories(vesper_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
   if (CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR CMAKE_CXX_COMPILER_ID MATCHES "GNU")
-    target_compile_features(vesper_tests PRIVATE cxx_std_23)
+    target_compile_features(vesper_tests PRIVATE cxx_std_20)
     target_compile_options(vesper_tests PRIVATE -Wall -Wextra -Wpedantic)
   elseif (MSVC)
-    target_compile_features(vesper_tests PRIVATE cxx_std_23)
+    target_compile_features(vesper_tests PRIVATE cxx_std_20)
     target_compile_options(vesper_tests PRIVATE /W4)
   endif()
 
@@ -83,6 +88,20 @@ if (VESPER_ENABLE_BENCH)
   )
   set(BENCHMARK_ENABLE_GTEST_TESTS OFF CACHE BOOL "" FORCE)
   set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+# ----------------------
+# Fuzz targets (Phase 4C scaffolding)
+# ----------------------
+if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  add_executable(wal_manifest_fuzz tests/fuzz/wal_manifest_fuzz.cpp)
+  target_link_libraries(wal_manifest_fuzz PRIVATE vesper_headers vesper_core vesper_wal)
+  target_compile_options(wal_manifest_fuzz PRIVATE -fsanitize=fuzzer,address,undefined -fno-omit-frame-pointer)
+  target_link_options(wal_manifest_fuzz PRIVATE -fsanitize=fuzzer,address,undefined)
+
+  add_executable(wal_frame_fuzz tests/fuzz/wal_frame_fuzz.cpp)
+  target_link_libraries(wal_frame_fuzz PRIVATE vesper_headers vesper_core vesper_wal)
+  target_compile_options(wal_frame_fuzz PRIVATE -fsanitize=fuzzer,address,undefined -fno-omit-frame-pointer)
+  target_link_options(wal_frame_fuzz PRIVATE -fsanitize=fuzzer,address,undefined)
+endif()
   FetchContent_MakeAvailable(gbench)
 
   add_executable(vesper_bench_dummy bench/micro/dummy_bench.cpp)

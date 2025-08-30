@@ -102,8 +102,6 @@ jobs:
       - name: Build (tests)
         run: cmake --build build -j --target vesper_tests
       - name: Run ctest
-      - name: Build core lib
-        run: cmake --build build -j --target vesper_core
         run: ctest --test-dir build --output-on-failure
 
 
@@ -139,3 +137,21 @@ jobs:
           test -f experiments/VALIDATION.md
           echo "Experiments schemas and examples present."
 
+
+
+  fuzz-smoke:
+    name: Fuzz smoke (Clang)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Clang
+        run: sudo apt-get update && sudo apt-get install -y clang
+      - name: Configure (fuzz)
+        run: CC=clang CXX=clang++ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+      - name: Build fuzzers
+        run: cmake --build build -j --target wal_manifest_fuzz wal_frame_fuzz
+      - name: Run fuzzers briefly
+        run: |
+          ./build/wal_manifest_fuzz -runs=1000 || exit 1
+          ./build/wal_frame_fuzz -runs=1000 || exit 1

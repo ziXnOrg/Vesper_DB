@@ -1,0 +1,3 @@
+vesper-wal-manifest v1
+file=wal-00000001.log seq=1 start_lsn=1 first_lsn=1 end_lsn=1 frames=1 bytes=24
+
