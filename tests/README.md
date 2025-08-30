@@ -103,6 +103,19 @@ ctest --test-dir build --output-on-failure -R "wal.*(replay|snapshot)"
   - Non-monotonic across rotation boundary
   - Stale manifest scanning: highest-seq file included even if unlisted
   - Perf sanity: recover_scan_dir scales ~O(N) (ratio ≤ 3)
+
+### Delivery limits quick reference
+
+- DeliveryLimits overlays on scan/replay (additive):
+  - cutoff_lsn: overrides snapshot cutoff
+  - type_mask: bit mask; (1u<<type) enables type
+  - max_frames/max_bytes: delivery caps; stats reflect delivered frames
+- Example:
+  - DeliveryLimits lim{.cutoff_lsn=3, .type_mask=(1u<<1)|(1u<<2), .max_frames=10};
+  - auto st = wal::recover_scan_dir(dir, lim, cb);
+- Run limits-only tests:
+  - ctest --test-dir build --output-on-failure -R "limits|scan|replay"
+
   - Error propagation: data_integrity on non-last corruption; io on missing file; torn tail on last tolerated
   - Purge: file-boundary cutoffs; stale-manifest parity; idempotency
   - Helpers: wal_replay_helpers.*, manifest_test_helpers.* (refactors removed duplication)

@@ -28,6 +28,18 @@ namespace vesper::wal {
 /** \brief Statistics gathered during recovery scan.
  *  \ingroup wal_api
  */
+
+/** \brief Delivery controls for scanning/replay (additive, optional).
+ *  If cutoff_lsn > 0, overrides snapshot cutoff. type_mask filters delivered types.
+ *  If max_frames/max_bytes > 0, delivery is limited (stats reflect delivered frames).
+ */
+struct DeliveryLimits {
+  std::uint64_t cutoff_lsn{0};       /**< overrides snapshot if >0 */
+  std::uint32_t type_mask{~0u};      /**< bit t enables type==t; default all */
+  std::size_t   max_frames{0};       /**< 0 = unlimited */
+  std::size_t   max_bytes{0};        /**< 0 = unlimited (payload+header bytes) */
+};
+
 struct RecoveryStats {
   std::size_t frames{};             /**< number of valid frames visited */
   std::size_t bytes{};              /**< total bytes of valid frames */
@@ -100,6 +112,11 @@ private:
   bool fsync_on_rotation_{};
   bool fsync_on_flush_{};
   std::uint64_t seq_index_{}; // current file sequence index
+
+// Overload: delivery controls (cutoff override, type mask, frame/byte limits)
+auto recover_scan_dir(const std::filesystem::path& dir, const DeliveryLimits& limits, std::function<void(const WalFrame&)> on_frame)
+    -> std::expected<RecoveryStats, vesper::core::error>;
+
   std::uint64_t cur_bytes_{}; // current file size in bytes
   std::uint64_t cur_frames_{};
   std::uint64_t cur_start_lsn_{};
