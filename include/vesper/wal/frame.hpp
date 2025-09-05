@@ -10,7 +10,7 @@
 
 #include <cstdint>
 #include <expected>
-#include <span>
+#include <vesper/span_polyfill.hpp>
 #include <string>
 #include <vector>
 

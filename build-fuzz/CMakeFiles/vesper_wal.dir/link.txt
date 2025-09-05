@@ -1,0 +1,2 @@
+/usr/bin/ar qc libvesper_wal.a CMakeFiles/vesper_wal.dir/src/wal/frame.cpp.o CMakeFiles/vesper_wal.dir/src/wal/io.cpp.o CMakeFiles/vesper_wal.dir/src/wal/manifest.cpp.o CMakeFiles/vesper_wal.dir/src/wal/snapshot.cpp.o CMakeFiles/vesper_wal.dir/src/wal/retention.cpp.o CMakeFiles/vesper_wal.dir/src/wal/replay.cpp.o
+/usr/bin/ranlib libvesper_wal.a

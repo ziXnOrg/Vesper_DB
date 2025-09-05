@@ -7,7 +7,7 @@
 #include <expected>
 #include <filesystem>
 #include <functional>
-#include <span>
+#include <vesper/span_polyfill.hpp>
 
 #include "vesper/error.hpp"
 #include "vesper/wal/frame.hpp"

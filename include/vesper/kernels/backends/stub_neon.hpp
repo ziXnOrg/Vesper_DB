@@ -7,7 +7,7 @@
  * Determinism: pure functions, O(d), no allocations, noexcept.
  */
 
-#include <span>
+#include <vesper/span_polyfill.hpp>
 #include "vesper/kernels/dispatch.hpp"
 #include "vesper/kernels/distance.hpp"
 

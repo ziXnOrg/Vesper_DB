@@ -9,19 +9,20 @@
 
 namespace std {
 
-// unexpected<E>
+// vesper_unexpected<E> - renamed to avoid conflict with deprecated std::unexpected function in GCC 11
 template <class E>
-class unexpected {
+class vesper_unexpected {
   E error_;
 public:
-  constexpr explicit unexpected(E e) : error_(std::move(e)) {}
+  constexpr explicit vesper_unexpected(E e) : error_(std::move(e)) {}
   constexpr const E& error() const & noexcept { return error_; }
   constexpr E&       error()       & noexcept { return error_; }
   constexpr E&&      error()      && noexcept { return std::move(error_); }
 };
+
 // CTAD
 template <class E>
-unexpected(E) -> unexpected<E>;
+vesper_unexpected(E) -> vesper_unexpected<E>;
 
 // expected<T, E>
 template <class T, class E>
@@ -35,8 +36,8 @@ public:
   constexpr expected(T&& v)      : has_(true), val_(std::move(v)) {}
 
   // from unexpected
-  constexpr expected(const unexpected<E>& u) : has_(false), err_(u.error()) {}
-  constexpr expected(unexpected<E>&& u)      : has_(false), err_(std::move(u.error())) {}
+  constexpr expected(const vesper_unexpected<E>& u) : has_(false), err_(u.error()) {}
+  constexpr expected(vesper_unexpected<E>&& u)      : has_(false), err_(std::move(u.error())) {}
 
   // default copy/move/dtor
   expected() = delete;
@@ -74,8 +75,8 @@ class expected<void, E> {
   std::optional<E> err_{};
 public:
   constexpr expected() = default; // success
-  constexpr expected(const unexpected<E>& u) : has_(false), err_(u.error()) {}
-  constexpr expected(unexpected<E>&& u)      : has_(false), err_(std::move(u.error())) {}
+  constexpr expected(const vesper_unexpected<E>& u) : has_(false), err_(u.error()) {}
+  constexpr expected(vesper_unexpected<E>&& u)      : has_(false), err_(std::move(u.error())) {}
 
   constexpr bool has_value() const noexcept { return has_; }
   constexpr explicit operator bool() const noexcept { return has_; }
@@ -86,4 +87,3 @@ public:
 };
 
 } // namespace std
-

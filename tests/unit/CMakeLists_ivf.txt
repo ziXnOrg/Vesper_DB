@@ -1,0 +1,14 @@
+# Standalone IVF-PQ test
+add_executable(ivf_pq_test_standalone
+    ivf_pq_test.cpp
+)
+
+target_link_libraries(ivf_pq_test_standalone
+    PRIVATE
+    vesper_core
+    GTest::gtest
+    GTest::gtest_main
+    Threads::Threads
+)
+
+target_compile_features(ivf_pq_test_standalone PRIVATE cxx_std_20)

@@ -18,7 +18,6 @@ Vesper is a single-library, embeddable vector search engine purpose-built for ed
 - **Optional At-Rest Encryption:** XChaCha20-Poly1305 (default), AES-GCM (FIPS-friendly mode)
 - **Portable & Flexible:** Pure C++20, runs on Linux, macOS, Windows. Stable C ABI for bindings—ideal for embedding or extension
 
----
 
 ## Who Should Use Vesper
 

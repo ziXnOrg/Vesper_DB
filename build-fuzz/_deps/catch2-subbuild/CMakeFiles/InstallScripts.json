@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"/Users/shaiiko/Vesper/build-fuzz/_deps/catch2-subbuild/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

@@ -4,7 +4,7 @@
  *  \brief Scalar backend implementing KernelOps via distance.hpp reference kernels.
  */
 
-#include <span>
+#include <vesper/span_polyfill.hpp>
 #include <string_view>
 #include "vesper/kernels/dispatch.hpp"
 #include "vesper/kernels/distance.hpp"
@@ -30,21 +30,7 @@ inline const KernelOps& get_scalar_ops() noexcept {
   return ops;
 }
 
-inline const KernelOps& select_backend(std::string_view name) noexcept {
-  if (name == "scalar" || name.empty()) return get_scalar_ops();
-#if VESPER_ENABLE_BACKEND_STUB_AVX2
-  if (name == "stub-avx2") return get_stub_avx2_ops();
-#endif
-#if VESPER_ENABLE_BACKEND_STUB_NEON
-  if (name == "stub-neon") return get_stub_neon_ops();
-#endif
-  return get_scalar_ops();
-}
-
-inline const KernelOps& select_backend_auto() noexcept {
-  // Stub: always return scalar ops for now
-  return get_scalar_ops();
-}
+// Implementation moved to dispatch.cpp for proper CPU feature detection
 
 } // namespace vesper::kernels
 

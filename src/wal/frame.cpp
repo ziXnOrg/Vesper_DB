@@ -74,7 +74,7 @@ auto decode_frame(std::span<const std::uint8_t> bytes) -> std::expected<WalFrame
   using vesper::core::error;
   using vesper::core::error_code;
   if (bytes.size() < WAL_HEADER_SIZE + 4) {
-    return std::unexpected(error{error_code::precondition_failed, "frame too short", "wal.frame"});
+    return std::vesper_unexpected(error{error_code::precondition_failed, "frame too short", "wal.frame"});
   }
   const std::uint8_t* p = bytes.data();
   const std::uint32_t magic = load_le32(p); p += 4;
@@ -84,19 +84,19 @@ auto decode_frame(std::span<const std::uint8_t> bytes) -> std::expected<WalFrame
   const std::uint64_t lsn = load_le64(p); p += 8;
 
   if (magic != WAL_MAGIC) {
-    return std::unexpected(error{error_code::data_integrity, "bad magic", "wal.frame"});
+    return std::vesper_unexpected(error{error_code::data_integrity, "bad magic", "wal.frame"});
   }
   if (len != bytes.size()) {
-    return std::unexpected(error{error_code::precondition_failed, "len mismatch", "wal.frame"});
+    return std::vesper_unexpected(error{error_code::precondition_failed, "len mismatch", "wal.frame"});
   }
   if (len < WAL_HEADER_SIZE + 4) {
-    return std::unexpected(error{error_code::precondition_failed, "len too small", "wal.frame"});
+    return std::vesper_unexpected(error{error_code::precondition_failed, "len too small", "wal.frame"});
   }
   if (reserved != 0) {
-    return std::unexpected(error{error_code::precondition_failed, "reserved != 0", "wal.frame"});
+    return std::vesper_unexpected(error{error_code::precondition_failed, "reserved != 0", "wal.frame"});
   }
   if (!verify_crc32c(bytes)) {
-    return std::unexpected(error{error_code::data_integrity, "crc mismatch", "wal.frame"});
+    return std::vesper_unexpected(error{error_code::data_integrity, "crc mismatch", "wal.frame"});
   }
   const std::size_t payload_len = len - WAL_HEADER_SIZE - 4;
   std::span<const std::uint8_t> payload{bytes.data() + WAL_HEADER_SIZE, payload_len};

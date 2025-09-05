@@ -29,12 +29,12 @@ auto WalWriter::open(std::string_view p, bool create_if_missing)
   if (create_if_missing) {
     std::ofstream touch(w.path_, std::ios::binary | std::ios::app);
     if (!touch.good()) {
-      return std::unexpected(error{error_code::io_failed, "open failed", "wal.io"});
+      return std::vesper_unexpected(error{error_code::io_failed, "open failed", "wal.io"});
     }
   }
   w.out_.open(w.path_, mode);
   if (!w.out_.good()) {
-    return std::unexpected(error{error_code::io_failed, "open failed", "wal.io"});
+    return std::vesper_unexpected(error{error_code::io_failed, "open failed", "wal.io"});
   }
   return w;
 }
@@ -61,7 +61,7 @@ auto WalWriter::open(const WalWriterOptions& opts)
   }
   if (!std::filesystem::exists(w.dir_)) {
     std::error_code ec; std::filesystem::create_directories(w.dir_, ec);
-    if (ec) return std::unexpected(error{error_code::io_failed, "mkdir failed", "wal.io"});
+    if (ec) return std::vesper_unexpected(error{error_code::io_failed, "mkdir failed", "wal.io"});
   }
   // Determine next seq index by listing existing files
   std::uint64_t max_seq = 0;
@@ -109,7 +109,7 @@ auto WalWriter::open_seq(std::uint64_t seq) -> std::expected<void, vesper::core:
   std::ostringstream oss; oss << prefix_ << std::setw(8) << std::setfill('0') << seq << ".log";
   path_ = dir_ / oss.str();
   out_.open(path_, std::ios::binary | std::ios::out | std::ios::trunc);
-  if (!out_.good()) return std::unexpected(error{error_code::io_failed, "open seq failed", "wal.io"});
+  if (!out_.good()) return std::vesper_unexpected(error{error_code::io_failed, "open seq failed", "wal.io"});
   cur_bytes_ = cur_frames_ = 0; cur_start_lsn_ = cur_end_lsn_ = 0;
   return {};
 }
@@ -132,19 +132,19 @@ auto WalWriter::append(std::uint64_t lsn, std::uint16_t type, std::span<const st
   using vesper::core::error; using vesper::core::error_code;
   if (strict_lsn_monotonic_ && (type==1 || type==2)) {
     if (have_prev_ && lsn <= prev_lsn_) {
-      return std::unexpected(error{error_code::precondition_failed, "non-monotonic LSN", "wal.io"});
+      return std::vesper_unexpected(error{error_code::precondition_failed, "non-monotonic LSN", "wal.io"});
     }
     prev_lsn_ = lsn; have_prev_ = true;
   }
   auto bytes = encode_frame(lsn, type, payload);
   if (!dir_.empty()) {
-    auto rot = maybe_rotate(bytes.size()); if (!rot) return std::unexpected(rot.error());
-    if (!out_.is_open()) { auto r = open_seq(seq_index_ + 1); if (!r) return std::unexpected(r.error()); }
+    auto rot = maybe_rotate(bytes.size()); if (!rot) return std::vesper_unexpected(rot.error());
+    if (!out_.is_open()) { auto r = open_seq(seq_index_ + 1); if (!r) return std::vesper_unexpected(r.error()); }
   } else if (!out_.good()) {
-    return std::unexpected(error{error_code::io_failed, "writer closed", "wal.io"});
+    return std::vesper_unexpected(error{error_code::io_failed, "writer closed", "wal.io"});
   }
   out_.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-  if (!out_.good()) return std::unexpected(error{error_code::io_failed, "write failed", "wal.io"});
+  if (!out_.good()) return std::vesper_unexpected(error{error_code::io_failed, "write failed", "wal.io"});
   cur_bytes_ += bytes.size();
   cur_frames_ += 1; stats_.frames++;
   if (cur_start_lsn_ == 0) cur_start_lsn_ = lsn;
@@ -155,7 +155,7 @@ auto WalWriter::append(std::uint64_t lsn, std::uint16_t type, std::span<const st
 auto WalWriter::publish_snapshot(std::uint64_t last_lsn) -> std::expected<void, vesper::core::error> {
   using vesper::core::error; using vesper::core::error_code;
   if (dir_.empty()) {
-    return std::unexpected(error{error_code::precondition_failed, "not in rotation mode", "wal.io"});
+    return std::vesper_unexpected(error{error_code::precondition_failed, "not in rotation mode", "wal.io"});
   }
   return save_snapshot(dir_, Snapshot{last_lsn});
 }
@@ -163,7 +163,7 @@ auto WalWriter::publish_snapshot(std::uint64_t last_lsn) -> std::expected<void, 
 
 auto WalWriter::flush(bool sync) -> std::expected<void, vesper::core::error> {
   using vesper::core::error; using vesper::core::error_code;
-  if (!out_.good()) return std::unexpected(error{error_code::io_failed, "writer closed", "wal.io"});
+  if (!out_.good()) return std::vesper_unexpected(error{error_code::io_failed, "writer closed", "wal.io"});
   out_.flush(); stats_.flushes++;
   if (sync || fsync_on_flush_) { stats_.syncs++; }
   // If rotating mode and we have an open file, upsert a manifest entry snapshot
@@ -187,7 +187,7 @@ auto recover_scan(std::string_view p, std::function<void(const WalFrame&)> on_fr
   using vesper::core::error; using vesper::core::error_code;
   RecoveryStats stats{};
   std::ifstream in(std::filesystem::path(p), std::ios::binary);
-  if (!in.good()) return std::unexpected(error{error_code::not_found, "open failed", "wal.io"});
+  if (!in.good()) return std::vesper_unexpected(error{error_code::not_found, "open failed", "wal.io"});
 
   std::uint64_t prev_lsn = 0;
   bool have_prev = false;
@@ -303,11 +303,11 @@ auto recover_scan_dir(const std::filesystem::path& dir, std::function<void(const
     // First pass: scan for torn detection (noop callback)
     auto noop = [](const WalFrame&){};
     auto stats = recover_scan(files[i].string(), noop);
-    if (!stats) return std::unexpected(stats.error());
+    if (!stats) return std::vesper_unexpected(stats.error());
     if (i + 1 < files.size()) {
       std::error_code ec; auto size = std::filesystem::file_size(files[i], ec);
       if (!ec && stats->bytes != size) {
-        return std::unexpected(error{error_code::data_integrity, "torn middle file", "wal.io"});
+        return std::vesper_unexpected(error{error_code::data_integrity, "torn middle file", "wal.io"});
       }
     }
 
@@ -336,7 +336,7 @@ auto recover_scan_dir(const std::filesystem::path& dir, std::function<void(const
       }
     };
     auto r2 = recover_scan(files[i].string(), per_frame);
-    if (!r2) return std::unexpected(r2.error());
+    if (!r2) return std::vesper_unexpected(r2.error());
 
     // Aggregate filtered into global
     agg.frames += filtered.frames;

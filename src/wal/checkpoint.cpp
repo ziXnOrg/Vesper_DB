@@ -16,12 +16,12 @@ auto load(const std::filesystem::path& dir, std::string_view consumer)
   std::error_code ec;
   if (!std::filesystem::exists(p, ec)) return ck; // missing is ok
   std::ifstream in(p);
-  if (!in.good()) return std::unexpected(error{error_code::io_failed, "open checkpoint failed", "wal.checkpoint"});
+  if (!in.good()) return std::vesper_unexpected(error{error_code::io_failed, "open checkpoint failed", "wal.checkpoint"});
   std::string line; std::getline(in, line);
   auto pos = line.find("last_lsn=");
-  if (pos != 0) return std::unexpected(error{error_code::data_integrity, "malformed checkpoint", "wal.checkpoint"});
+  if (pos != 0) return std::vesper_unexpected(error{error_code::data_integrity, "malformed checkpoint", "wal.checkpoint"});
   auto v = line.substr(std::string("last_lsn=").size());
-  try { ck.last_lsn = std::stoull(v); } catch(...) { return std::unexpected(error{error_code::data_integrity, "malformed checkpoint value", "wal.checkpoint"}); }
+  try { ck.last_lsn = std::stoull(v); } catch(...) { return std::vesper_unexpected(error{error_code::data_integrity, "malformed checkpoint value", "wal.checkpoint"}); }
   return ck;
 }
 
@@ -30,10 +30,10 @@ auto save(const std::filesystem::path& dir, std::string_view consumer, std::uint
   using vesper::core::error; using vesper::core::error_code;
   auto folder = dir / "wal.checkpoints";
   std::error_code ec; std::filesystem::create_directories(folder, ec);
-  if (ec) return std::unexpected(error{error_code::io_failed, "mkdir ckpt failed", "wal.checkpoint"});
+  if (ec) return std::vesper_unexpected(error{error_code::io_failed, "mkdir ckpt failed", "wal.checkpoint"});
   auto p = path_for(dir, consumer);
   std::ofstream out(p, std::ios::binary | std::ios::trunc);
-  if (!out.good()) return std::unexpected(error{error_code::io_failed, "write checkpoint failed", "wal.checkpoint"});
+  if (!out.good()) return std::vesper_unexpected(error{error_code::io_failed, "write checkpoint failed", "wal.checkpoint"});
   out << "last_lsn=" << last_lsn << "\n";
   return {};
 }
@@ -43,7 +43,7 @@ auto replay_from_checkpoint(const std::filesystem::path& dir,
                             std::uint32_t type_mask,
                             wal::ReplayCallback cb)
     -> std::expected<wal::RecoveryStats, vesper::core::error> {
-  auto ckx = load(dir, consumer); if (!ckx) return std::unexpected(ckx.error());
+  auto ckx = load(dir, consumer); if (!ckx) return std::vesper_unexpected(ckx.error());
   auto ck = *ckx;
   // Replay with delivery cutoff override and mask
   DeliveryLimits lim{}; lim.cutoff_lsn = ck.last_lsn; lim.type_mask = type_mask;
@@ -51,7 +51,7 @@ auto replay_from_checkpoint(const std::filesystem::path& dir,
   auto st = recover_scan_dir(dir, lim, [&](const wal::WalFrame& f){ last = f.lsn; cb(f.lsn, f.type, f.payload); });
   if (!st) return st;
   if (last != ck.last_lsn) {
-    if (auto sx = save(dir, consumer, last); !sx) return std::unexpected(sx.error());
+    if (auto sx = save(dir, consumer, last); !sx) return std::vesper_unexpected(sx.error());
   }
   wal::RecoveryStats rs = *st;
   rs.last_lsn = last; // reflect last delivered

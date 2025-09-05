@@ -8,6 +8,8 @@
 
 using namespace vesper;
 using namespace test_support;
+using vesper::core::error_code;
+
 
 namespace {
 namespace fs = std::filesystem;
@@ -72,7 +74,7 @@ TEST_CASE("recover_scan_dir propagates integrity and I/O errors deterministicall
 
     auto st = wal::recover_scan_dir(dir, [&](const wal::WalFrame&){ /*noop*/ });
     REQUIRE_FALSE(st.has_value());
-    REQUIRE(st.error().code == error_code::io);
+    REQUIRE(st.error().code == error_code::io_failed);
 
     // Restore to not affect other sections
     fs::rename(backup, missing, ec);

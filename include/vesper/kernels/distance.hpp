@@ -11,7 +11,7 @@
  */
 
 #include <cstddef>
-#include <span>
+#include <vesper/span_polyfill.hpp>
 #include <cmath>
 
 namespace vesper::kernels {

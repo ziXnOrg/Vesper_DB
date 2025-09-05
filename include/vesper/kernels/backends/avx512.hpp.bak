@@ -1,0 +1,235 @@
+#pragma once
+
+#ifdef __x86_64__
+
+/** \file avx512.hpp
+ *  \brief Production AVX-512 SIMD kernels for distance computation.
+ *
+ * Implements L2 squared, inner product, and cosine similarity using AVX-512 intrinsics.
+ * Features:
+ * - 16-wide float operations with FMA instructions  
+ * - Masked operations for efficient tail handling
+ * - Reduced instruction count vs AVX2 for better IPC
+ * - Cache-line aware processing with prefetch hints
+ *
+ * Preconditions: a.size() == b.size() > 0; inputs finite; for cosine, norms > 0.
+ * Complexity: O(d) with SIMD vectorization factor of 16
+ * Thread-safety: Pure functions, no shared state
+ */
+
+#include <immintrin.h>
+#include <span>
+#include <cmath>
+#include "vesper/kernels/dispatch.hpp"
+
+namespace vesper::kernels {
+
+namespace detail {
+
+/** \brief Horizontal sum of 16 floats in AVX-512 register.
+ *  Uses efficient reduction tree to minimize latency.
+ */
+[[gnu::always_inline]] inline auto hsum_ps_512(__m512 v) noexcept -> float {
+    // Reduce 512 to 256
+    const __m256 low = _mm512_castps512_ps256(v);
+    const __m256 high = _mm512_extractf32x8_ps(v, 1);
+    const __m256 sum256 = _mm256_add_ps(low, high);
+    
+    // Reduce 256 to 128
+    const __m128 low128 = _mm256_castps256_ps128(sum256);
+    const __m128 high128 = _mm256_extractf128_ps(sum256, 1);
+    const __m128 sum128 = _mm_add_ps(low128, high128);
+    
+    // Reduce 128 to scalar
+    const __m128 shuf = _mm_movehdup_ps(sum128);
+    const __m128 sums = _mm_add_ps(sum128, shuf);
+    const __m128 shuf2 = _mm_movehl_ps(sums, sums);
+    const __m128 result = _mm_add_ss(sums, shuf2);
+    return _mm_cvtss_f32(result);
+}
+
+/** \brief Software prefetch for next two cache lines.
+ *  Hints L1/L2 cache to load next iteration's data.
+ */
+[[gnu::always_inline]] inline void prefetch_l1_512(const float* ptr) noexcept {
+    _mm_prefetch(reinterpret_cast<const char*>(ptr + 32), _MM_HINT_T0);
+    _mm_prefetch(reinterpret_cast<const char*>(ptr + 48), _MM_HINT_T0);
+}
+
+} // namespace detail
+
+/** \brief AVX-512 optimized L2 squared distance.
+ *
+ * Computes ||a - b||² using AVX-512 FMA instructions.
+ * Processes 16 elements per iteration with masked tail handling.
+ *
+ * \param a First vector
+ * \param b Second vector
+ * \return L2 squared distance
+ */
+[[gnu::hot]] inline auto avx512_l2_sq(std::span<const float> a, std::span<const float> b) noexcept -> float {
+    const std::size_t n = a.size();
+    const float* pa = a.data();
+    const float* pb = b.data();
+    
+    __m512 sum = _mm512_setzero_ps();
+    std::size_t i = 0;
+    
+    // Main loop: process 16 elements at a time
+    const std::size_t simd_end = n & ~15u;
+    for (; i < simd_end; i += 16) {
+        // Prefetch next cache lines
+        if (i + 32 < n) {
+            detail::prefetch_l1_512(pa + i + 32);
+            detail::prefetch_l1_512(pb + i + 32);
+        }
+        
+        const __m512 va = _mm512_loadu_ps(pa + i);
+        const __m512 vb = _mm512_loadu_ps(pb + i);
+        const __m512 diff = _mm512_sub_ps(va, vb);
+        sum = _mm512_fmadd_ps(diff, diff, sum);
+    }
+    
+    // Tail: use masked operations for remaining elements
+    const std::size_t remaining = n - i;
+    if (remaining > 0) {
+        const __mmask16 mask = (1u << remaining) - 1;
+        const __m512 va = _mm512_maskz_loadu_ps(mask, pa + i);
+        const __m512 vb = _mm512_maskz_loadu_ps(mask, pb + i);
+        const __m512 diff = _mm512_sub_ps(va, vb);
+        sum = _mm512_mask_fmadd_ps(diff, mask, diff, sum);
+    }
+    
+    return detail::hsum_ps_512(sum);
+}
+
+/** \brief AVX-512 optimized inner product.
+ *
+ * Computes a·b using AVX-512 FMA instructions.
+ * Achieves near-peak FLOPS with 16-wide operations.
+ *
+ * \param a First vector
+ * \param b Second vector
+ * \return Inner product
+ */
+[[gnu::hot]] inline auto avx512_inner_product(std::span<const float> a, std::span<const float> b) noexcept -> float {
+    const std::size_t n = a.size();
+    const float* pa = a.data();
+    const float* pb = b.data();
+    
+    __m512 sum = _mm512_setzero_ps();
+    std::size_t i = 0;
+    
+    // Main loop: process 16 elements at a time
+    const std::size_t simd_end = n & ~15u;
+    for (; i < simd_end; i += 16) {
+        // Prefetch next cache lines
+        if (i + 32 < n) {
+            detail::prefetch_l1_512(pa + i + 32);
+            detail::prefetch_l1_512(pb + i + 32);
+        }
+        
+        const __m512 va = _mm512_loadu_ps(pa + i);
+        const __m512 vb = _mm512_loadu_ps(pb + i);
+        sum = _mm512_fmadd_ps(va, vb, sum);
+    }
+    
+    // Tail: use masked operations for remaining elements
+    const std::size_t remaining = n - i;
+    if (remaining > 0) {
+        const __mmask16 mask = (1u << remaining) - 1;
+        const __m512 va = _mm512_maskz_loadu_ps(mask, pa + i);
+        const __m512 vb = _mm512_maskz_loadu_ps(mask, pb + i);
+        sum = _mm512_mask_fmadd_ps(va, mask, vb, sum);
+    }
+    
+    return detail::hsum_ps_512(sum);
+}
+
+/** \brief AVX-512 optimized cosine similarity.
+ *
+ * Computes (a·b) / (||a|| * ||b||) with single-pass norm computation.
+ * Uses AVX-512 FMA for maximum throughput.
+ *
+ * \param a First vector
+ * \param b Second vector
+ * \return Cosine similarity in [0, 1]
+ */
+[[gnu::hot]] inline auto avx512_cosine_similarity(std::span<const float> a, std::span<const float> b) noexcept -> float {
+    const std::size_t n = a.size();
+    const float* pa = a.data();
+    const float* pb = b.data();
+    
+    __m512 dot_sum = _mm512_setzero_ps();
+    __m512 norm_a_sum = _mm512_setzero_ps();
+    __m512 norm_b_sum = _mm512_setzero_ps();
+    std::size_t i = 0;
+    
+    // Main loop: compute dot product and norms in single pass
+    const std::size_t simd_end = n & ~15u;
+    for (; i < simd_end; i += 16) {
+        // Prefetch next cache lines
+        if (i + 32 < n) {
+            detail::prefetch_l1_512(pa + i + 32);
+            detail::prefetch_l1_512(pb + i + 32);
+        }
+        
+        const __m512 va = _mm512_loadu_ps(pa + i);
+        const __m512 vb = _mm512_loadu_ps(pb + i);
+        
+        dot_sum = _mm512_fmadd_ps(va, vb, dot_sum);
+        norm_a_sum = _mm512_fmadd_ps(va, va, norm_a_sum);
+        norm_b_sum = _mm512_fmadd_ps(vb, vb, norm_b_sum);
+    }
+    
+    // Tail: use masked operations for remaining elements  
+    const std::size_t remaining = n - i;
+    if (remaining > 0) {
+        const __mmask16 mask = (1u << remaining) - 1;
+        const __m512 va = _mm512_maskz_loadu_ps(mask, pa + i);
+        const __m512 vb = _mm512_maskz_loadu_ps(mask, pb + i);
+        
+        dot_sum = _mm512_mask_fmadd_ps(va, mask, vb, dot_sum);
+        norm_a_sum = _mm512_mask_fmadd_ps(va, mask, va, norm_a_sum);
+        norm_b_sum = _mm512_mask_fmadd_ps(vb, mask, vb, norm_b_sum);
+    }
+    
+    const float dot = detail::hsum_ps_512(dot_sum);
+    const float norm_a_sq = detail::hsum_ps_512(norm_a_sum);
+    const float norm_b_sq = detail::hsum_ps_512(norm_b_sum);
+    
+    // Compute final similarity with fast reciprocal square root
+    const float norm_prod = std::sqrt(norm_a_sq * norm_b_sq);
+    return (norm_prod > 0.0f) ? (dot / norm_prod) : 0.0f;
+}
+
+/** \brief AVX-512 optimized cosine distance.
+ *
+ * Computes 1.0 - cosine_similarity for use as distance metric.
+ *
+ * \param a First vector
+ * \param b Second vector
+ * \return Cosine distance in [0, 2]
+ */
+[[gnu::hot]] inline auto avx512_cosine_distance(std::span<const float> a, std::span<const float> b) noexcept -> float {
+    return 1.0f - avx512_cosine_similarity(a, b);
+}
+
+/** \brief Get AVX-512 kernel operations table.
+ *
+ * Returns static singleton of kernel function pointers.
+ * Thread-safe through function-local static initialization.
+ */
+inline const KernelOps& get_avx512_ops() noexcept {
+    static const KernelOps ops{
+        &avx512_l2_sq,
+        &avx512_inner_product,
+        &avx512_cosine_similarity,
+        &avx512_cosine_distance
+    };
+    return ops;
+}
+
+} // namespace vesper::kernels
+
+#endif // __x86_64__
