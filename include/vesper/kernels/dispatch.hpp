@@ -8,7 +8,7 @@
  */
 
 #include <cstddef>
-#include <span>
+#include <vesper/span_polyfill.hpp>
 #include <string_view>
 
 namespace vesper::kernels {
@@ -21,12 +21,12 @@ struct KernelOps {
 };
 
 // Returns a stable reference valid for the process lifetime. "scalar" is the default backend.
-inline const KernelOps& select_backend(std::string_view name = "scalar") noexcept;
+const KernelOps& select_backend(std::string_view name = "scalar") noexcept;
 
-/** \brief Auto-selects a kernel backend. Stub that currently returns the scalar backend.
+/** \brief Auto-selects a kernel backend based on CPU features.
  *  Thread-safe initialization and stable reference semantics apply.
  */
-inline const KernelOps& select_backend_auto() noexcept;
+const KernelOps& select_backend_auto() noexcept;
 
 } // namespace vesper::kernels
 

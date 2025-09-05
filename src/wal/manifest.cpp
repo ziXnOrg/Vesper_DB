@@ -18,11 +18,11 @@ auto load_manifest(const std::filesystem::path& dir)
   auto p = dir / "wal.manifest";
   std::ifstream in(p);
   if (!in.good()) {
-    return std::unexpected(error{error_code::not_found, "manifest open failed", "wal.manifest"});
+    return std::vesper_unexpected(error{error_code::not_found, "manifest open failed", "wal.manifest"});
   }
   std::string header; std::getline(in, header);
   if (header != std::string("vesper-wal-manifest v1")) {
-    return std::unexpected(error{error_code::data_integrity, "bad manifest header", "wal.manifest"});
+    return std::vesper_unexpected(error{error_code::data_integrity, "bad manifest header", "wal.manifest"});
   }
   std::string line;
   while (std::getline(in, line)) {
@@ -54,7 +54,7 @@ auto save_manifest(const std::filesystem::path& dir, const Manifest& m)
   auto p = dir / "wal.manifest";
   std::ofstream out(p, std::ios::binary | std::ios::trunc);
   if (!out.good()) {
-    return std::unexpected(error{error_code::io_failed, "manifest write failed", "wal.manifest"});
+    return std::vesper_unexpected(error{error_code::io_failed, "manifest write failed", "wal.manifest"});
   }
   out << "vesper-wal-manifest v1\n";
   for (const auto& e : m.entries) {
@@ -118,7 +118,7 @@ auto validate_manifest(const std::filesystem::path& dir)
 
 auto enforce_manifest_order(const std::filesystem::path& dir)
     -> std::expected<void, vesper::core::error> {
-  auto mx = load_manifest(dir); if (!mx) return std::unexpected(mx.error());
+  auto mx = load_manifest(dir); if (!mx) return std::vesper_unexpected(mx.error());
   Manifest m = *mx; std::sort(m.entries.begin(), m.entries.end(), [](auto&a, auto&b){ return a.seq < b.seq; });
   return save_manifest(dir, m);
 }
@@ -167,7 +167,7 @@ auto rebuild_manifest(const std::filesystem::path& dir)
     auto st = recover_scan(kv.second.string(), [&](const WalFrame& f){
       frames++; bytes += f.len; if (first_lsn==0) first_lsn = f.lsn; last_lsn = f.lsn;
     });
-    if (!st) return std::unexpected(st.error());
+    if (!st) return std::vesper_unexpected(st.error());
     ManifestEntry e{};
     e.file = kv.second.filename().string();
     e.seq = kv.first;

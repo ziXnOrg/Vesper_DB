@@ -15,7 +15,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
-#include <span>
+#include <vesper/span_polyfill.hpp>
 #include <string>
 #include <string_view>
 #include <vector>

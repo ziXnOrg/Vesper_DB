@@ -1,0 +1,46 @@
+{
+	"sources" : 
+	[
+		{
+			"file" : "/Users/shaiiko/Vesper/build-fuzz/_deps/gbench-subbuild/CMakeFiles/gbench-populate"
+		},
+		{
+			"file" : "/Users/shaiiko/Vesper/build-fuzz/_deps/gbench-subbuild/CMakeFiles/gbench-populate.rule"
+		},
+		{
+			"file" : "/Users/shaiiko/Vesper/build-fuzz/_deps/gbench-subbuild/CMakeFiles/gbench-populate-complete.rule"
+		},
+		{
+			"file" : "/Users/shaiiko/Vesper/build-fuzz/_deps/gbench-subbuild/gbench-populate-prefix/src/gbench-populate-stamp/gbench-populate-build.rule"
+		},
+		{
+			"file" : "/Users/shaiiko/Vesper/build-fuzz/_deps/gbench-subbuild/gbench-populate-prefix/src/gbench-populate-stamp/gbench-populate-configure.rule"
+		},
+		{
+			"file" : "/Users/shaiiko/Vesper/build-fuzz/_deps/gbench-subbuild/gbench-populate-prefix/src/gbench-populate-stamp/gbench-populate-download.rule"
+		},
+		{
+			"file" : "/Users/shaiiko/Vesper/build-fuzz/_deps/gbench-subbuild/gbench-populate-prefix/src/gbench-populate-stamp/gbench-populate-install.rule"
+		},
+		{
+			"file" : "/Users/shaiiko/Vesper/build-fuzz/_deps/gbench-subbuild/gbench-populate-prefix/src/gbench-populate-stamp/gbench-populate-mkdir.rule"
+		},
+		{
+			"file" : "/Users/shaiiko/Vesper/build-fuzz/_deps/gbench-subbuild/gbench-populate-prefix/src/gbench-populate-stamp/gbench-populate-patch.rule"
+		},
+		{
+			"file" : "/Users/shaiiko/Vesper/build-fuzz/_deps/gbench-subbuild/gbench-populate-prefix/src/gbench-populate-stamp/gbench-populate-test.rule"
+		},
+		{
+			"file" : "/Users/shaiiko/Vesper/build-fuzz/_deps/gbench-subbuild/gbench-populate-prefix/src/gbench-populate-stamp/gbench-populate-update.rule"
+		}
+	],
+	"target" : 
+	{
+		"labels" : 
+		[
+			"gbench-populate"
+		],
+		"name" : "gbench-populate"
+	}
+}

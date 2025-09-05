@@ -1,0 +1,2 @@
+/usr/bin/ar qc libvesper_core.a CMakeFiles/vesper_core.dir/src/inmemory_collection.cpp.o CMakeFiles/vesper_core.dir/src/filter_eval.cpp.o
+/usr/bin/ranlib libvesper_core.a

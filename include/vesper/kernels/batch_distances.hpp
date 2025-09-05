@@ -1,0 +1,306 @@
+#pragma once
+
+/** \file batch_distances.hpp
+ *  \brief SIMD-optimized batch distance computations.
+ *
+ * Provides high-performance batch distance operations for:
+ * - Distance matrix computation
+ * - Multi-query search
+ * - Centroid-to-centroid distances
+ *
+ * Optimizations:
+ * - AVX2/AVX-512 vectorization
+ * - Cache blocking for large matrices
+ * - Parallel execution with OpenMP
+ */
+
+#include <cstdint>
+#include <vesper/span_polyfill.hpp>
+#include <vector>
+#include <algorithm>
+#include <numeric>
+#ifdef __x86_64__
+#include <immintrin.h>
+#endif
+
+#include "vesper/kernels/dispatch.hpp"
+#include "vesper/index/aligned_buffer.hpp"
+
+namespace vesper::kernels {
+
+/** \brief Compute distance matrix between two sets of vectors.
+ *
+ * Computes all pairwise distances between vectors in sets A and B.
+ * Uses cache blocking and SIMD for optimal performance.
+ *
+ * \param a_data First set of vectors [n_a x dim]
+ * \param b_data Second set of vectors [n_b x dim]
+ * \param n_a Number of vectors in set A
+ * \param n_b Number of vectors in set B
+ * \param dim Vector dimensionality
+ * \param[out] distances Output matrix [n_a x n_b]
+ * 
+ * Complexity: O(n_a * n_b * dim) with SIMD acceleration
+ */
+inline auto compute_distance_matrix_l2(
+    const float* a_data, const float* b_data,
+    std::size_t n_a, std::size_t n_b, std::size_t dim,
+    float* distances) -> void {
+    
+    constexpr std::size_t BLOCK_SIZE = 64; // Cache block size
+    
+    #pragma omp parallel for collapse(2) schedule(dynamic, 1)
+    for (std::size_t i_block = 0; i_block < n_a; i_block += BLOCK_SIZE) {
+        for (std::size_t j_block = 0; j_block < n_b; j_block += BLOCK_SIZE) {
+            const std::size_t i_end = std::min(i_block + BLOCK_SIZE, n_a);
+            const std::size_t j_end = std::min(j_block + BLOCK_SIZE, n_b);
+            
+            // Process block
+            for (std::size_t i = i_block; i < i_end; ++i) {
+                const float* a_vec = a_data + i * dim;
+                
+                for (std::size_t j = j_block; j < j_end; ++j) {
+                    const float* b_vec = b_data + j * dim;
+                    
+                    // Use SIMD kernel
+                    const auto& ops = select_backend_auto();
+                    distances[i * n_b + j] = ops.l2_sq(
+                        std::span(a_vec, dim),
+                        std::span(b_vec, dim)
+                    );
+                }
+            }
+        }
+    }
+}
+
+/** \brief Compute distance matrix with AVX2 specialization.
+ *
+ * Optimized for aligned memory and dimension divisible by 8.
+ */
+#ifdef __AVX2__
+inline auto compute_distance_matrix_l2_avx2(
+    const index::AlignedCentroidBuffer& a_buffer,
+    const index::AlignedCentroidBuffer& b_buffer,
+    index::AlignedDistanceMatrix& distances) -> void {
+    
+    const std::uint32_t n_a = a_buffer.size();
+    const std::uint32_t n_b = b_buffer.size();
+    const std::size_t dim = a_buffer.dimension();
+    
+    // Ensure dimension is multiple of 8 for AVX2
+    const std::size_t vec_dim = dim & ~7ULL;
+    const std::size_t remainder = dim - vec_dim;
+    
+    #pragma omp parallel for schedule(dynamic, 4)
+    for (std::uint32_t i = 0; i < n_a; ++i) {
+        const float* a_vec = a_buffer[i];
+        
+        // Prefetch next row
+        if (i + 1 < n_a) {
+            a_buffer.prefetch_read(i + 1);
+        }
+        
+        for (std::uint32_t j = 0; j < n_b; ++j) {
+            const float* b_vec = b_buffer[j];
+            
+            __m256 sum = _mm256_setzero_ps();
+            
+            // Main vectorized loop
+            for (std::size_t d = 0; d < vec_dim; d += 8) {
+                const __m256 a = _mm256_load_ps(a_vec + d);
+                const __m256 b = _mm256_load_ps(b_vec + d);
+                const __m256 diff = _mm256_sub_ps(a, b);
+                sum = _mm256_fmadd_ps(diff, diff, sum);
+            }
+            
+            // Horizontal sum
+            const __m128 sum_high = _mm256_extractf128_ps(sum, 1);
+            const __m128 sum_low = _mm256_castps256_ps128(sum);
+            const __m128 sum128 = _mm_add_ps(sum_low, sum_high);
+            const __m128 sum64 = _mm_hadd_ps(sum128, sum128);
+            const __m128 sum32 = _mm_hadd_ps(sum64, sum64);
+            float result = _mm_cvtss_f32(sum32);
+            
+            // Handle remainder
+            for (std::size_t d = vec_dim; d < dim; ++d) {
+                const float diff = a_vec[d] - b_vec[d];
+                result += diff * diff;
+            }
+            
+            distances.set(i, j, result);
+        }
+    }
+}
+#endif
+
+/** \brief Compute distances from multiple queries to centroids.
+ *
+ * Optimized for search operations where we need distances from
+ * many queries to a fixed set of centroids.
+ *
+ * \param queries Query vectors [n_queries x dim]
+ * \param centroids Centroid buffer
+ * \param n_queries Number of queries
+ * \param[out] distances Output [n_queries x k]
+ */
+inline auto compute_query_centroid_distances(
+    const float* queries,
+    const index::AlignedCentroidBuffer& centroids,
+    std::size_t n_queries,
+    float* distances) -> void {
+    
+    const std::uint32_t k = centroids.size();
+    const std::size_t dim = centroids.dimension();
+    
+    #pragma omp parallel for schedule(dynamic, 32)
+    for (std::size_t q = 0; q < n_queries; ++q) {
+        const float* query = queries + q * dim;
+        float* query_dists = distances + q * k;
+        
+        // Process in groups for better cache usage
+        constexpr std::uint32_t GROUP_SIZE = 8;
+        std::uint32_t c = 0;
+        
+        for (; c + GROUP_SIZE <= k; c += GROUP_SIZE) {
+            // Prefetch next group
+            for (std::uint32_t i = 0; i < GROUP_SIZE && c + GROUP_SIZE + i < k; ++i) {
+                centroids.prefetch_read(c + GROUP_SIZE + i);
+            }
+            
+            // Compute distances for this group
+            for (std::uint32_t i = 0; i < GROUP_SIZE; ++i) {
+                const auto& ops = select_backend_auto();
+                query_dists[c + i] = ops.l2_sq(
+                    std::span(query, dim),
+                    centroids.get_centroid(c + i)
+                );
+            }
+        }
+        
+        // Handle remainder
+        for (; c < k; ++c) {
+            const auto& ops = select_backend_auto();
+            query_dists[c] = ops.l2_sq(
+                std::span(query, dim),
+                centroids.get_centroid(c)
+            );
+        }
+    }
+}
+
+/** \brief Find k nearest centroids for multiple queries.
+ *
+ * \param queries Query vectors [n_queries x dim]
+ * \param centroids Centroid buffer
+ * \param n_queries Number of queries
+ * \param k_nearest Number of nearest centroids to find
+ * \param[out] indices Nearest centroid indices [n_queries x k_nearest]
+ * \param[out] distances Distances to nearest centroids [n_queries x k_nearest]
+ */
+inline auto find_nearest_centroids_batch(
+    const float* queries,
+    const index::AlignedCentroidBuffer& centroids,
+    std::size_t n_queries,
+    std::uint32_t k_nearest,
+    std::uint32_t* indices,
+    float* distances) -> void {
+    
+    const std::uint32_t n_centroids = centroids.size();
+    const std::size_t dim = centroids.dimension();
+    
+    // Temporary buffer for all distances
+    std::vector<float> all_distances(n_queries * n_centroids);
+    compute_query_centroid_distances(queries, centroids, n_queries, all_distances.data());
+    
+    // Find k nearest for each query
+    #pragma omp parallel for
+    for (std::size_t q = 0; q < n_queries; ++q) {
+        const float* query_dists = all_distances.data() + q * n_centroids;
+        std::uint32_t* query_indices = indices + q * k_nearest;
+        float* query_nearest = distances + q * k_nearest;
+        
+        // Create index array
+        std::vector<std::uint32_t> idx(n_centroids);
+        std::iota(idx.begin(), idx.end(), 0);
+        
+        // Partial sort to find k nearest
+        std::partial_sort(idx.begin(), idx.begin() + k_nearest, idx.end(),
+            [query_dists](std::uint32_t i, std::uint32_t j) {
+                return query_dists[i] < query_dists[j];
+            });
+        
+        // Copy results
+        for (std::uint32_t i = 0; i < k_nearest; ++i) {
+            query_indices[i] = idx[i];
+            query_nearest[i] = query_dists[idx[i]];
+        }
+    }
+}
+
+/** \brief Compute symmetric distance matrix with optimizations.
+ *
+ * Exploits symmetry to compute only upper triangle.
+ */
+inline auto compute_symmetric_distance_matrix(
+    const index::AlignedCentroidBuffer& centroids,
+    index::AlignedDistanceMatrix& distances) -> void {
+    
+    const std::uint32_t k = centroids.size();
+    const std::size_t dim = centroids.dimension();
+    
+    #ifdef __AVX2__
+    if (dim >= 8 && dim % 8 == 0) {
+        // Use optimized AVX2 version
+        #pragma omp parallel for schedule(dynamic, 4)
+        for (std::uint32_t i = 0; i < k; ++i) {
+            const float* a_vec = centroids[i];
+            
+            // Diagonal is always 0
+            distances.set(i, i, 0.0f);
+            
+            // Compute upper triangle
+            for (std::uint32_t j = i + 1; j < k; ++j) {
+                const float* b_vec = centroids[j];
+                
+                __m256 sum = _mm256_setzero_ps();
+                
+                for (std::size_t d = 0; d < dim; d += 8) {
+                    const __m256 a = _mm256_load_ps(a_vec + d);
+                    const __m256 b = _mm256_load_ps(b_vec + d);
+                    const __m256 diff = _mm256_sub_ps(a, b);
+                    sum = _mm256_fmadd_ps(diff, diff, sum);
+                }
+                
+                // Horizontal sum
+                const __m128 sum_high = _mm256_extractf128_ps(sum, 1);
+                const __m128 sum_low = _mm256_castps256_ps128(sum);
+                const __m128 sum128 = _mm_add_ps(sum_low, sum_high);
+                const __m128 sum64 = _mm_hadd_ps(sum128, sum128);
+                const __m128 sum32 = _mm_hadd_ps(sum64, sum64);
+                const float dist = _mm_cvtss_f32(sum32);
+                
+                distances.set_symmetric(i, j, dist);
+            }
+        }
+    } else
+    #endif
+    {
+        // Fallback to standard computation
+        #pragma omp parallel for schedule(dynamic, 4)
+        for (std::uint32_t i = 0; i < k; ++i) {
+            distances.set(i, i, 0.0f);
+            
+            for (std::uint32_t j = i + 1; j < k; ++j) {
+                const auto& ops = select_backend_auto();
+                const float dist = ops.l2_sq(
+                    centroids.get_centroid(i),
+                    centroids.get_centroid(j)
+                );
+                distances.set_symmetric(i, j, dist);
+            }
+        }
+    }
+}
+
+} // namespace vesper::kernels
