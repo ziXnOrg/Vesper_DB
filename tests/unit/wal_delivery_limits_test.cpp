@@ -25,7 +25,7 @@ TEST_CASE("DeliveryLimits cutoff/type/limits control delivery deterministically"
 
   // cutoff override at 1: expect only lsn>1
   {
-    DeliveryLimits lim{}; lim.cutoff_lsn = 1; std::vector<uint64_t> lsns;
+    wal::DeliveryLimits lim{}; lim.cutoff_lsn = 1; std::vector<uint64_t> lsns;
     auto st = wal::recover_scan_dir(dir, lim, [&](const wal::WalFrame& f){ lsns.push_back(f.lsn); });
     REQUIRE(st.has_value());
     REQUIRE(lsns.size() == 2);
@@ -35,7 +35,7 @@ TEST_CASE("DeliveryLimits cutoff/type/limits control delivery deterministically"
 
   // type mask {1,2} with max_frames=1: only first matching frame delivered
   {
-    DeliveryLimits lim{}; lim.type_mask = (1u<<1)|(1u<<2); lim.max_frames = 1; std::vector<uint16_t> types;
+    wal::DeliveryLimits lim{}; lim.type_mask = (1u<<1)|(1u<<2); lim.max_frames = 1; std::vector<uint16_t> types;
     auto st = wal::recover_scan_dir(dir, lim, [&](const wal::WalFrame& f){ types.push_back(f.type); });
     REQUIRE(st.has_value());
     REQUIRE(types.size() == 1);
@@ -44,7 +44,7 @@ TEST_CASE("DeliveryLimits cutoff/type/limits control delivery deterministically"
 
   // type mask {3} with max_bytes that fits exactly padding frame
   {
-    DeliveryLimits lim{}; lim.type_mask = (1u<<3); lim.max_bytes = 8; std::vector<uint16_t> types;
+    wal::DeliveryLimits lim{}; lim.type_mask = (1u<<3); lim.max_bytes = 8; std::vector<uint16_t> types;
     auto st = wal::recover_scan_dir(dir, lim, [&](const wal::WalFrame& f){ types.push_back(f.type); });
     REQUIRE(st.has_value());
     REQUIRE(types.size() == 1);

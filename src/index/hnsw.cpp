@@ -5,13 +5,17 @@
 #include "vesper/core/memory_pool.hpp"
 
 #include <algorithm>
+#include <array>
+
 #include <queue>
 #include <random>
 #include <unordered_set>
+#include <unordered_map>
 #include <mutex>
 #include <fstream>
 #include <cmath>
 #include <thread>
+#include <iostream>
 
 namespace vesper::index {
 
@@ -41,6 +45,11 @@ public:
         float level_multiplier{1.0f / std::log(2.0f)};
         float ml{1.0f / std::log(2.0f)};  // Level assignment probability
         std::uint32_t seed{42};
+        std::uint32_t last_base_chain{std::numeric_limits<std::uint32_t>::max()};
+
+        // Cached kernel ops for hot paths (selected once at init)
+        const kernels::KernelOps* ops{nullptr};
+
         std::mt19937 rng;
     } state_;
 
@@ -49,7 +58,14 @@ public:
     std::unordered_map<std::uint64_t, std::uint32_t> id_to_idx_;
     mutable std::mutex graph_mutex_;  // For structural changes only
     mutable std::mutex label_lookup_mutex_;  // For id_to_idx_ access
+#if defined(VESPER_PARTITIONED_BASE_LOCKS) && VESPER_PARTITIONED_BASE_LOCKS
+    static constexpr std::size_t kBaseShardCount = 64;
+    mutable std::array<std::mutex, kBaseShardCount> base_layer_shards_{};
+    inline std::size_t base_shard_for(std::uint32_t idx) const noexcept { return static_cast<std::size_t>(idx) % kBaseShardCount; }
+#endif
+
     std::vector<std::unique_ptr<std::mutex>> node_mutexes_;  // Per-node fine-grained locking
+
 
     /** \brief Initialize index. */
     auto init(std::size_t dim, const HnswBuildParams& params,
@@ -148,6 +164,10 @@ auto HnswIndex::Impl::init(std::size_t dim, const HnswBuildParams& params,
     const float ml = 1.0f / std::log(static_cast<float>(state_.params.M));
     state_.level_multiplier = ml;
     state_.ml = ml;
+
+    // Cache kernel ops once for hot paths
+    state_.ops = &kernels::select_backend_auto();
+
     state_.initialized = true;
 
     if (max_elements > 0) {
@@ -174,8 +194,8 @@ auto HnswIndex::Impl::select_level() -> std::uint32_t {
 }
 
 auto HnswIndex::Impl::compute_distance(const float* a, const float* b) const -> float {
-    const auto& ops = kernels::select_backend_auto();
-    return ops.l2_sq(std::span(a, state_.dim), std::span(b, state_.dim));
+    // Use cached kernel ops selected at init
+    return state_.ops->l2_sq(std::span(a, state_.dim), std::span(b, state_.dim));
 }
 
 auto HnswIndex::Impl::passes_filter(std::uint32_t idx, const std::uint8_t* filter,
@@ -314,6 +334,9 @@ auto HnswIndex::Impl::connect_node(std::uint32_t new_idx,
         }
     }
 
+    bool accepted_any = false;
+
+
     // CRITICAL: Properly update reverse edges with back-pruning
     // Lock both nodes consistently to avoid concurrent modification races
     for (std::uint32_t neighbor : selected) {
@@ -335,12 +358,14 @@ auto HnswIndex::Impl::connect_node(std::uint32_t new_idx,
             }
         }
 
-        // Add the new node
-        const float dist_to_new = compute_distance(neighbor_data, nodes_[new_idx]->data.data());
-        neighbor_candidates.emplace_back(dist_to_new, new_idx);
-
-        // Prune to max connections using RobustPrune
+        // Prune limit and add the new node (with slight bias at base layer if saturated)
         const std::uint32_t max_conn = (level == 0) ? state_.params.max_M0 : state_.params.max_M;
+        bool saturated_base = (level == 0 && neighbor_candidates.size() >= max_conn);
+        float dist_to_new = compute_distance(neighbor_data, nodes_[new_idx]->data.data());
+        if (saturated_base) {
+            dist_to_new *= 0.95f; // bias keep-new when neighbor saturated at base layer
+        }
+        neighbor_candidates.emplace_back(dist_to_new, new_idx);
 
         if (neighbor_candidates.size() > max_conn) {
             auto [new_selected_nv, _] = robust_prune(
@@ -350,18 +375,51 @@ auto HnswIndex::Impl::connect_node(std::uint32_t new_idx,
             );
             neighbor_neighbors = std::move(new_selected_nv);
         } else {
+
             // Add new_idx if under limit and not already present
             if (std::find(neighbor_neighbors.begin(), neighbor_neighbors.end(), new_idx) == neighbor_neighbors.end()) {
                 neighbor_neighbors.push_back(new_idx);
             }
         }
+        // Track acceptance of reverse edge for this neighbor
+        if (std::find(neighbor_neighbors.begin(), neighbor_neighbors.end(), new_idx) != neighbor_neighbors.end()) {
+            accepted_any = true;
+        }
+
     }
+
+    // Guarantee reciprocal connectivity at base layer: ensure at least one reverse edge
+    if (level == 0 && !accepted_any && !selected.empty()) {
+        std::uint32_t forced_neighbor = selected[0];
+        std::unique_lock<std::mutex> l1(*node_mutexes_[new_idx], std::defer_lock);
+        std::unique_lock<std::mutex> l2(*node_mutexes_[forced_neighbor], std::defer_lock);
+        std::lock(l1, l2);
+
+        auto& nn = nodes_[forced_neighbor]->neighbors[level];
+        const std::uint32_t max_conn = state_.params.max_M0;
+        if (std::find(nn.begin(), nn.end(), new_idx) == nn.end()) {
+            if (nn.size() < max_conn) {
+                nn.push_back(new_idx);
+            } else {
+                // Replace the farthest
+                const float* fd = nodes_[forced_neighbor]->data.data();
+                float worst_dist = -1.0f; std::size_t worst_pos = 0;
+                for (std::size_t i = 0; i < nn.size(); ++i) {
+                    float d = compute_distance(fd, nodes_[nn[i]]->data.data());
+                    if (d > worst_dist) { worst_dist = d; worst_pos = i; }
+                }
+                nn[worst_pos] = new_idx;
+            }
+        }
+    }
+
 
     // Handle pruned connections if keep_pruned_connections is enabled
     if (state_.params.keep_pruned_connections && !pruned_candidates.empty()) {
         // Add pruned candidates with lower priority
         // This helps maintain graph connectivity
         for (std::uint32_t pruned_neighbor : pruned_candidates) {
+
             std::unique_lock<std::mutex> l1(*node_mutexes_[new_idx], std::defer_lock);
             std::unique_lock<std::mutex> l2(*node_mutexes_[pruned_neighbor], std::defer_lock);
             std::lock(l1, l2);
@@ -517,7 +575,13 @@ auto HnswIndex::Impl::add(std::uint64_t id, const float* data)
     {
         std::lock_guard<std::mutex> lock(graph_mutex_);
         for (std::int32_t lc = static_cast<std::int32_t>(std::min(level, ep_top_level_snapshot)); lc > 0; --lc) {
-            nearest = search_layer(data, curr_nearest, state_.params.efConstruction, lc, nullptr);
+            std::uint32_t efL = state_.params.efConstruction;
+            if (state_.params.adaptive_ef) {
+                efL = state_.params.efConstructionUpper != 0
+                    ? state_.params.efConstructionUpper
+                    : std::max<std::uint32_t>(50u, state_.params.efConstruction / 2);
+            }
+            nearest = search_layer(data, curr_nearest, efL, lc, nullptr);
             const std::uint32_t M = state_.params.max_M;
             connect_node(new_idx, nearest, M, lc);
             if (!nearest.empty()) {
@@ -526,8 +590,10 @@ auto HnswIndex::Impl::add(std::uint64_t id, const float* data)
         }
     }
 
-    // Insert at base layer (l == 0) with fine-grained locking
+    // Insert at base layer (l == 0)
+#if defined(VESPER_SERIALIZE_BASE_LAYER) && VESPER_SERIALIZE_BASE_LAYER
     {
+        std::lock_guard<std::mutex> lock(graph_mutex_); // serialize entire base-layer connect
         nearest = search_layer(data, curr_nearest, state_.params.efConstruction, 0, nullptr);
         const std::uint32_t M0 = state_.params.max_M0;
         connect_node(new_idx, nearest, M0, 0);
@@ -535,6 +601,33 @@ auto HnswIndex::Impl::add(std::uint64_t id, const float* data)
             curr_nearest = nearest[0].second;
         }
     }
+#else
+    // Serialize only the search, perform connect in parallel
+    #if defined(VESPER_PARTITIONED_BASE_LOCKS) && VESPER_PARTITIONED_BASE_LOCKS
+    {
+        // Partitioned base-layer lock: only serialize within shard of new_idx
+        std::lock_guard<std::mutex> shard_lock(base_layer_shards_[base_shard_for(new_idx)]);
+        nearest = search_layer(data, curr_nearest, state_.params.efConstruction, 0, nullptr);
+        const std::uint32_t M0 = state_.params.max_M0;
+        connect_node(new_idx, nearest, M0, 0);
+        if (!nearest.empty()) {
+            curr_nearest = nearest[0].second;
+        }
+    }
+    #else
+    {
+        std::lock_guard<std::mutex> lock(graph_mutex_);
+        nearest = search_layer(data, curr_nearest, state_.params.efConstruction, 0, nullptr);
+    }
+    {
+        const std::uint32_t M0 = state_.params.max_M0;
+        connect_node(new_idx, nearest, M0, 0);
+        if (!nearest.empty()) {
+            curr_nearest = nearest[0].second;
+        }
+    }
+    #endif
+#endif
 
     // Update entry point if new node has higher level
     {
@@ -563,7 +656,7 @@ auto HnswIndex::Impl::add_batch_parallel(const std::uint64_t* ids, const float* 
     // Following hnswlib's approach: use ParallelFor but call regular add with fine-grained locking
     // This maintains proper graph connectivity while allowing parallelism
 
-    HnswParallelContext context(0);  // Use default thread count
+    HnswParallelContext context(state_.params.num_threads);  // Use configured thread count (0=auto)
     auto& pool = context.pool();
 
     // Pre-allocate space and mutexes to avoid reallocation during parallel phase
@@ -625,6 +718,8 @@ auto HnswIndex::Impl::add_batch_parallel(const std::uint64_t* ids, const float* 
     if (has_error.load() && first_error.has_value()) {
         return std::vesper_unexpected(first_error.value());
     }
+
+    // (removed temporary diagnostics)
 
     return {};
 }
@@ -715,7 +810,6 @@ auto HnswIndex::add(std::uint64_t id, const float* data)
 auto HnswIndex::add_batch(const std::uint64_t* ids, const float* data, std::size_t n)
     -> std::expected<void, core::error> {
     if (n == 0) return {};
-    // Delegate to Impl's internal parallel batch add, which uses fine-grained locking
     return impl_->add_batch_parallel(ids, data, n);
 }
 

@@ -16,9 +16,26 @@
 #include <unordered_set>
 #include <queue>
 #include <iomanip>
+#include <cstdlib>
 #include "vesper/index/hnsw.hpp"
 
 using namespace vesper::index;
+
+static inline std::uint32_t getenv_u32(const char* key, std::uint32_t fallback) {
+    if (const char* v = std::getenv(key)) {
+        try { return static_cast<std::uint32_t>(std::stoul(v)); } catch (...) { }
+    }
+    return fallback;
+}
+
+static inline bool getenv_bool(const char* key, bool fallback) {
+    if (const char* v = std::getenv(key)) {
+        std::string s(v); for (auto& c : s) c = std::tolower(c);
+        if (s == "1" || s == "true" || s == "yes" || s == "on") return true;
+        if (s == "0" || s == "false" || s == "no" || s == "off") return false;
+    }
+    return fallback;
+}
 
 /** \brief Generate random float vectors. */
 auto generate_random_data(std::size_t n, std::size_t dim, std::uint32_t seed = 42)
@@ -182,13 +199,23 @@ int main() {
     HnswIndex index;
     HnswBuildParams params{
         .M = 16,
-        .efConstruction = 200,
+        .efConstruction = 150,
         .seed = 42,
         .extend_candidates = true,  // CRITICAL for recall
         .keep_pruned_connections = true,  // Algorithm 4
         .max_M = 16,
-        .max_M0 = 32
+        .max_M0 = 32,
+        .num_threads = 4,
+        .adaptive_ef = false,
+        .efConstructionUpper = 0
     };
+
+    // Env overrides
+    params.num_threads = getenv_u32("VESPER_NUM_THREADS", params.num_threads);
+    params.efConstruction = getenv_u32("VESPER_EFC", params.efConstruction);
+    params.efConstructionUpper = getenv_u32("VESPER_EFC_UPPER", params.efConstructionUpper);
+    params.adaptive_ef = getenv_bool("VESPER_ADAPTIVE_EF", params.adaptive_ef);
+
     
     auto init_result = index.init(dim, params, n_vectors);
     if (!init_result.has_value()) {

@@ -46,24 +46,25 @@ inline auto compute_distance_matrix_l2(
     const float* a_data, const float* b_data,
     std::size_t n_a, std::size_t n_b, std::size_t dim,
     float* distances) -> void {
-    
+
     constexpr std::size_t BLOCK_SIZE = 64; // Cache block size
-    
+
+    // Hoist backend selection outside hot loops
+    const auto& ops = select_backend_auto();
+
     #pragma omp parallel for collapse(2) schedule(dynamic, 1)
     for (std::size_t i_block = 0; i_block < n_a; i_block += BLOCK_SIZE) {
         for (std::size_t j_block = 0; j_block < n_b; j_block += BLOCK_SIZE) {
             const std::size_t i_end = std::min(i_block + BLOCK_SIZE, n_a);
             const std::size_t j_end = std::min(j_block + BLOCK_SIZE, n_b);
-            
+
             // Process block
             for (std::size_t i = i_block; i < i_end; ++i) {
                 const float* a_vec = a_data + i * dim;
-                
+
                 for (std::size_t j = j_block; j < j_end; ++j) {
                     const float* b_vec = b_data + j * dim;
-                    
-                    // Use SIMD kernel
-                    const auto& ops = select_backend_auto();
+
                     distances[i * n_b + j] = ops.l2_sq(
                         std::span(a_vec, dim),
                         std::span(b_vec, dim)
@@ -149,38 +150,39 @@ inline auto compute_query_centroid_distances(
     const index::AlignedCentroidBuffer& centroids,
     std::size_t n_queries,
     float* distances) -> void {
-    
+
     const std::uint32_t k = centroids.size();
     const std::size_t dim = centroids.dimension();
-    
+
+    // Hoist backend selection outside hot loops
+    const auto& ops = select_backend_auto();
+
     #pragma omp parallel for schedule(dynamic, 32)
     for (std::size_t q = 0; q < n_queries; ++q) {
         const float* query = queries + q * dim;
         float* query_dists = distances + q * k;
-        
+
         // Process in groups for better cache usage
         constexpr std::uint32_t GROUP_SIZE = 8;
         std::uint32_t c = 0;
-        
+
         for (; c + GROUP_SIZE <= k; c += GROUP_SIZE) {
             // Prefetch next group
             for (std::uint32_t i = 0; i < GROUP_SIZE && c + GROUP_SIZE + i < k; ++i) {
                 centroids.prefetch_read(c + GROUP_SIZE + i);
             }
-            
+
             // Compute distances for this group
             for (std::uint32_t i = 0; i < GROUP_SIZE; ++i) {
-                const auto& ops = select_backend_auto();
                 query_dists[c + i] = ops.l2_sq(
                     std::span(query, dim),
                     centroids.get_centroid(c + i)
                 );
             }
         }
-        
+
         // Handle remainder
         for (; c < k; ++c) {
-            const auto& ops = select_backend_auto();
             query_dists[c] = ops.l2_sq(
                 std::span(query, dim),
                 centroids.get_centroid(c)
@@ -207,8 +209,8 @@ inline auto find_nearest_centroids_batch(
     float* distances) -> void {
     
     const std::uint32_t n_centroids = centroids.size();
-    const std::size_t dim = centroids.dimension();
-    
+    // dim not needed here; compute_query_centroid_distances handles dimension
+
     // Temporary buffer for all distances
     std::vector<float> all_distances(n_queries * n_centroids);
     compute_query_centroid_distances(queries, centroids, n_queries, all_distances.data());
@@ -248,7 +250,8 @@ inline auto compute_symmetric_distance_matrix(
     
     const std::uint32_t k = centroids.size();
     const std::size_t dim = centroids.dimension();
-    
+    (void)dim; // may be unused on some backends
+
     #ifdef __AVX2__
     if (dim >= 8 && dim % 8 == 0) {
         // Use optimized AVX2 version
@@ -287,12 +290,12 @@ inline auto compute_symmetric_distance_matrix(
     #endif
     {
         // Fallback to standard computation
+        const auto& ops = select_backend_auto();
         #pragma omp parallel for schedule(dynamic, 4)
         for (std::uint32_t i = 0; i < k; ++i) {
             distances.set(i, i, 0.0f);
-            
+
             for (std::uint32_t j = i + 1; j < k; ++j) {
-                const auto& ops = select_backend_auto();
                 const float dist = ops.l2_sq(
                     centroids.get_centroid(i),
                     centroids.get_centroid(j)

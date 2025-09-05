@@ -8,7 +8,15 @@
 #include <type_traits>
 #include <vector>
 
-#if defined(__GNUC__) && __GNUC__ < 12
+// Prefer the standard library span when available; otherwise provide a tiny polyfill
+#if defined(__has_include)
+#  if __has_include(<span>)
+#    include <span>
+#    define VESPER_HAS_STD_SPAN 1
+#  endif
+#endif
+
+#ifndef VESPER_HAS_STD_SPAN
 namespace std {
     template<typename T, std::size_t Extent = std::size_t(-1)>
     class span {
@@ -27,20 +35,19 @@ namespace std {
         constexpr span() noexcept : data_(nullptr), size_(0) {}
         constexpr span(pointer ptr, size_type count) : data_(ptr), size_(count) {}
         constexpr span(pointer first, pointer last) : data_(first), size_(last - first) {}
-        
+
         template<std::size_t N>
         constexpr span(T (&arr)[N]) noexcept : data_(arr), size_(N) {}
-        
-        // Constructor from std::vector
+
         template<typename Container,
                  typename = std::enable_if_t<
-                     std::is_same_v<std::remove_const_t<T>, 
+                     std::is_same_v<std::remove_const_t<T>,
                                    typename Container::value_type>>>
         constexpr span(Container& c) noexcept : data_(c.data()), size_(c.size()) {}
-        
+
         template<typename Container,
                  typename = std::enable_if_t<
-                     std::is_same_v<std::remove_const_t<T>, 
+                     std::is_same_v<std::remove_const_t<T>,
                                    typename Container::value_type>>>
         constexpr span(const Container& c) noexcept : data_(c.data()), size_(c.size()) {}
 
@@ -70,10 +77,8 @@ namespace std {
     // Deduction guides
     template<typename T, std::size_t N>
     span(T (&)[N]) -> span<T, N>;
-    
+
     template<typename T>
     span(T*, std::size_t) -> span<T>;
 }
-#else
-#include <span>
 #endif

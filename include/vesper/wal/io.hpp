@@ -122,9 +122,6 @@ private:
   bool fsync_on_flush_{};
   std::uint64_t seq_index_{}; // current file sequence index
 
-// Overload: delivery controls (cutoff override, type mask, frame/byte limits)
-auto recover_scan_dir(const std::filesystem::path& dir, const DeliveryLimits& limits, std::function<void(const WalFrame&)> on_frame)
-    -> std::expected<RecoveryStats, vesper::core::error>;
 
   std::uint64_t cur_bytes_{}; // current file size in bytes
   std::uint64_t cur_frames_{};
@@ -153,6 +150,11 @@ auto recover_scan_dir(const std::filesystem::path& dir, std::function<void(const
 // Overload: filter delivered frames by type bitmask (bit t enables type==t)
 auto recover_scan_dir(const std::filesystem::path& dir, std::uint32_t type_mask, std::function<void(const WalFrame&)> on_frame)
     -> std::expected<RecoveryStats, vesper::core::error>;
+  // Overload: delivery controls (cutoff override, type mask, frame/byte limits)
+  auto recover_scan_dir(const std::filesystem::path& dir, const DeliveryLimits& limits, std::function<void(const WalFrame&)> on_frame)
+      -> std::expected<RecoveryStats, vesper::core::error>;
+
 
 } // namespace vesper::wal
+
 

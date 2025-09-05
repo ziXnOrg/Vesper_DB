@@ -1,6 +1,8 @@
 #include <catch2/catch_all.hpp>
 #include <vesper/wal/io.hpp>
 #include <vesper/wal/retention.hpp>
+#include <vesper/wal/manifest.hpp>
+
 #include <filesystem>
 
 #include <tests/support/replayer_payload.hpp>

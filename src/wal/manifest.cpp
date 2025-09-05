@@ -5,6 +5,9 @@
 #include <fstream>
 #include <sstream>
 
+#include <set>
+#include <regex>
+
 #ifndef VESPER_ENABLE_MANIFEST_FSYNC
 #define VESPER_ENABLE_MANIFEST_FSYNC 0
 #endif
@@ -67,7 +70,10 @@ auto save_manifest(const std::filesystem::path& dir, const Manifest& m)
         << " bytes=" << e.bytes
         << "\n";
   }
-#if VESPER_ENABLE_MANIFEST_FSYNC
+  out.flush();
+  // No cross-platform fsync for ofstream; intentionally skipping fsync in tests.
+  return {};
+}
 
 auto validate_manifest(const std::filesystem::path& dir)
     -> std::expected<ManifestValidation, vesper::core::error> {
@@ -121,12 +127,6 @@ auto enforce_manifest_order(const std::filesystem::path& dir)
   auto mx = load_manifest(dir); if (!mx) return std::vesper_unexpected(mx.error());
   Manifest m = *mx; std::sort(m.entries.begin(), m.entries.end(), [](auto&a, auto&b){ return a.seq < b.seq; });
   return save_manifest(dir, m);
-}
-
-  out.flush();
-  // No cross-platform fsync for ofstream; this is a guard placeholder. We intentionally skip actual fsync in tests.
-#endif
-  return {};
 }
 
 

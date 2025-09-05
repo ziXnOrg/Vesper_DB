@@ -36,6 +36,9 @@ struct HnswBuildParams {
     std::uint32_t max_M{16};                /**< Max connections for level > 0 */
     std::uint32_t max_M0{32};               /**< Max connections for level 0 (2x M) */
     std::uint32_t num_threads{0};           /**< Number of threads (0 = auto) */
+    // Adaptive efConstruction schedule for upper layers
+    bool adaptive_ef{false};                /**< If true, use smaller ef on upper layers */
+    std::uint32_t efConstructionUpper{0};   /**< Optional explicit ef for layers > 0 (0 = auto: max(50, efConstruction/2)) */
 };
 
 /** \brief HNSW search parameters. */
@@ -58,7 +61,7 @@ struct HnswStats {
 
 /** \brief Hierarchical Navigable Small World index.
  *
- * Implements the HNSW algorithm for approximate nearest neighbor search
+ * HNSW algorithm for approximate nearest neighbor search
  * with support for filtered queries and incremental construction.
  */
 class HnswIndex {

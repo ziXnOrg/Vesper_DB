@@ -4,6 +4,8 @@
 #include <filesystem>
 
 #include <tests/support/replayer_payload.hpp>
+#include <tests/support/wal_replay_helpers.hpp>
+
 
 using namespace vesper;
 using namespace test_support;
