@@ -256,6 +256,10 @@ endif()
   add_executable(vesper_bench_index bench/vesper_bench_index.cpp)
   target_link_libraries(vesper_bench_index PRIVATE benchmark::benchmark vesper_headers vesper_core Threads::Threads)
   target_compile_features(vesper_bench_index PRIVATE cxx_std_20)
+
+  add_executable(vesper_bench_fused_vs_materialized bench/micro/fused_vs_materialized_bench.cpp)
+  target_link_libraries(vesper_bench_fused_vs_materialized PRIVATE benchmark::benchmark vesper_headers vesper_core)
+
 endif()
 
 # ----------------------

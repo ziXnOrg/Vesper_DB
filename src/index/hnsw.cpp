@@ -290,7 +290,8 @@ auto HnswIndex::Impl::search_layer(const float* query, std::uint32_t entry_point
         nearest.pop();
     }
 
-    std::reverse(result.begin(), result.end());
+    // Ensure deterministic ordering on ties (distance, then index)
+    std::sort(result.begin(), result.end());
     return result;
 }
 

@@ -19,6 +19,11 @@
 #include <vector>
 #include <optional>
 
+#if defined(__APPLE__) || defined(__linux__)
+#include <pthread.h>
+#include <cstdio>
+#endif
+
 
 #ifndef VESPER_EXPERIMENTAL_WORK_STEALING
 #define VESPER_EXPERIMENTAL_WORK_STEALING 0
@@ -147,9 +152,9 @@ public:
             }));
         }
 
-        // Wait for all tasks to complete
+        // Wait for all tasks to complete (propagate exceptions)
         for (auto& future : futures) {
-            future.wait();
+            future.get();
         }
     }
 
@@ -157,6 +162,18 @@ public:
     [[nodiscard]] auto num_threads() const noexcept -> std::size_t {
         return workers_.size();
     }
+
+    /** \brief Request cooperative stop. New submissions fail; workers exit when queues drain. */
+    auto request_stop() noexcept -> void {
+        {
+            std::unique_lock<std::mutex> lock(queue_mutex_);
+            stop_.store(true, std::memory_order_relaxed);
+        }
+        cv_.notify_all();
+    }
+
+    /** \brief Whether a stop was requested. */
+    [[nodiscard]] auto stopping() const noexcept -> bool { return stop_.load(std::memory_order_relaxed); }
 
     /** \brief Wait for all tasks to complete. */
     auto wait_all() -> void {
@@ -171,7 +188,14 @@ public:
     }
 
 private:
-    auto worker_loop(std::size_t worker_id) -> void {
+    auto worker_loop(std::size_t worker_id [[maybe_unused]]) -> void {
+        // Set OS thread name for debugging/profiling (best-effort)
+        #if defined(__APPLE__)
+          char tname[32]; std::snprintf(tname, sizeof(tname), "hnsw-worker-%zu", worker_id);
+          pthread_setname_np(tname);
+        #elif defined(__linux__)
+          pthread_setname_np(pthread_self(), "hnsw-worker");
+        #endif
         while (true) {
             std::function<void()> task;
 
