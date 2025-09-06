@@ -90,7 +90,8 @@ set(VESPER_CORE_SOURCES
 
     src/index/hnsw.cpp
     # src/index/hnsw_lockfree.cpp (archived to experimental/)
-    src/index/ivf_pq.cpp)
+    src/index/ivf_pq.cpp
+    src/index/disk_graph.cpp)
 
 # Add platform-specific sources
 # Windows reports AMD64, Linux/macOS report x86_64
