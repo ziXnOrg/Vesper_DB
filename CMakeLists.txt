@@ -369,25 +369,5 @@ add_executable(connectivity_smoke tools/connectivity_smoke.cpp)
 # Link against core library and headers; threads not strictly needed here
 target_link_libraries(connectivity_smoke PRIVATE vesper_headers vesper_core Threads::Threads)
 
-# Performance benchmark
-add_executable(simple_benchmark simple_benchmark.cpp)
-target_link_libraries(simple_benchmark PRIVATE vesper_headers vesper_core Threads::Threads)
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|amd64|x64")
-  if(MSVC)
-    target_compile_options(simple_benchmark PRIVATE /arch:AVX2)
-  else()
-    target_compile_options(simple_benchmark PRIVATE -mavx2 -mfma)
-  endif()
-endif()
-
-# IVF-PQ test
-add_executable(test_ivfpq test_ivfpq.cpp)
-target_link_libraries(test_ivfpq PRIVATE vesper_headers vesper_core Threads::Threads)
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|amd64|x64")
-  if(MSVC)
-    target_compile_options(test_ivfpq PRIVATE /arch:AVX2)
-  else()
-    target_compile_options(test_ivfpq PRIVATE -mavx2 -mfma)
-  endif()
-endif()
+# Removed standalone test executables - tests are now in tests/ directory
 

@@ -60,8 +60,8 @@ public:
         std::vector<std::uint64_t> gt(n_queries * k);
         
         #pragma omp parallel for
-        for (std::size_t q = 0; q < n_queries; ++q) {
-            const float* query = queries + q * dim_;
+        for (int q = 0; q < static_cast<int>(n_queries); ++q) {
+            const float* query = queries + static_cast<std::size_t>(q) * dim_;
             std::vector<std::pair<float, std::uint64_t>> distances;
             
             for (std::size_t i = 0; i < n_; ++i) {

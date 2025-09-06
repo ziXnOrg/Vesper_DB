@@ -126,12 +126,12 @@ inline auto compute_distance_matrix_l2_avx2(
     const std::size_t remainder = dim - vec_dim;
 
     #pragma omp parallel for schedule(dynamic, 4)
-    for (std::uint32_t i = 0; i < n_a; ++i) {
-        const float* a_vec = a_buffer[i];
+    for (int i = 0; i < static_cast<int>(n_a); ++i) {
+        const float* a_vec = a_buffer[static_cast<std::uint32_t>(i)];
 
         // Prefetch next row
-        if (i + 1 < n_a) {
-            a_buffer.prefetch_read(i + 1);
+        if (static_cast<std::uint32_t>(i) + 1 < n_a) {
+            a_buffer.prefetch_read(static_cast<std::uint32_t>(i) + 1);
         }
 
         for (std::uint32_t j = 0; j < n_b; ++j) {
@@ -161,7 +161,7 @@ inline auto compute_distance_matrix_l2_avx2(
                 result += diff * diff;
             }
 
-            distances.set(i, j, result);
+            distances.set(static_cast<std::uint32_t>(i), j, result);
         }
     }
 }
@@ -353,8 +353,8 @@ inline auto compute_symmetric_distance_matrix(
     const bool is_similarity = (op == DistanceOp::InnerProduct || op == DistanceOp::CosineSimilarity);
 
     #pragma omp parallel for schedule(dynamic, 32)
-    for (std::size_t q = 0; q < n_queries; ++q) {
-      const float* query = queries + q * dim;
+    for (int q = 0; q < static_cast<int>(n_queries); ++q) {
+      const float* query = queries + static_cast<std::size_t>(q) * dim;
 
       // Heap of (score, index). For distances we keep a max-heap (largest on top),
       // for similarities we keep a min-heap (smallest on top), both of size <= k.
@@ -464,10 +464,10 @@ inline auto compute_symmetric_distance_matrix(
       float* out) -> void {
     const auto& ops = select_backend_auto();
     #pragma omp parallel for collapse(2) schedule(dynamic, 1)
-    for (std::size_t i = 0; i < n_a; ++i) {
-      for (std::size_t j = 0; j < n_b; ++j) {
-        const float* av = a_data + i * dim;
-        const float* bv = b_data + j * dim;
+    for (int i = 0; i < static_cast<int>(n_a); ++i) {
+      for (int j = 0; j < static_cast<int>(n_b); ++j) {
+        const float* av = a_data + static_cast<std::size_t>(i) * dim;
+        const float* bv = b_data + static_cast<std::size_t>(j) * dim;
         float v = 0.0f;
         switch (op) {
           case DistanceOp::L2:              v = ops.l2_sq(std::span(av, dim), std::span(bv, dim)); break;
@@ -475,7 +475,7 @@ inline auto compute_symmetric_distance_matrix(
           case DistanceOp::CosineDistance:  v = ops.cosine_distance(std::span(av, dim), std::span(bv, dim)); break;
           case DistanceOp::CosineSimilarity:v = ops.cosine_similarity(std::span(av, dim), std::span(bv, dim)); break;
         }
-        out[i * n_b + j] = v;
+        out[static_cast<std::size_t>(i) * n_b + static_cast<std::size_t>(j)] = v;
       }
     }
   }
@@ -492,8 +492,8 @@ inline auto compute_symmetric_distance_matrix(
     const std::size_t dim = A.dimension();
     (void)dim;
     #pragma omp parallel for schedule(dynamic, 4)
-    for (std::uint32_t i = 0; i < n_a; ++i) {
-      const auto a = A.get_centroid(i);
+    for (int i = 0; i < static_cast<int>(n_a); ++i) {
+      const auto a = A.get_centroid(static_cast<std::uint32_t>(i));
       for (std::uint32_t j = 0; j < n_b; ++j) {
         float v = 0.0f;
         switch (op) {
@@ -517,17 +517,17 @@ inline auto compute_symmetric_distance_matrix(
     const auto& ops = select_backend_auto();
     const std::uint32_t n_c = centroids.size();
     #pragma omp parallel for collapse(2) schedule(dynamic, 1)
-    for (std::size_t q = 0; q < n_queries; ++q) {
-      for (std::uint32_t c = 0; c < n_c; ++c) {
-        const float* qv = queries + q * dim;
+    for (int q = 0; q < static_cast<int>(n_queries); ++q) {
+      for (int c = 0; c < static_cast<int>(n_c); ++c) {
+        const float* qv = queries + static_cast<std::size_t>(q) * dim;
         float v = 0.0f;
         switch (op) {
-          case DistanceOp::L2:               v = ops.l2_sq(std::span(qv, dim), centroids.get_centroid(c)); break;
-          case DistanceOp::InnerProduct:     v = ops.inner_product(std::span(qv, dim), centroids.get_centroid(c)); break;
-          case DistanceOp::CosineDistance:   v = ops.cosine_distance(std::span(qv, dim), centroids.get_centroid(c)); break;
-          case DistanceOp::CosineSimilarity: v = ops.cosine_similarity(std::span(qv, dim), centroids.get_centroid(c)); break;
+          case DistanceOp::L2:               v = ops.l2_sq(std::span(qv, dim), centroids.get_centroid(static_cast<std::uint32_t>(c))); break;
+          case DistanceOp::InnerProduct:     v = ops.inner_product(std::span(qv, dim), centroids.get_centroid(static_cast<std::uint32_t>(c))); break;
+          case DistanceOp::CosineDistance:   v = ops.cosine_distance(std::span(qv, dim), centroids.get_centroid(static_cast<std::uint32_t>(c))); break;
+          case DistanceOp::CosineSimilarity: v = ops.cosine_similarity(std::span(qv, dim), centroids.get_centroid(static_cast<std::uint32_t>(c))); break;
         }
-        out[q * n_c + c] = v;
+        out[static_cast<std::size_t>(q) * n_c + static_cast<std::uint32_t>(c)] = v;
       }
     }
   }

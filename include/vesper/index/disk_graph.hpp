@@ -105,6 +105,29 @@ struct IOStats {
     std::atomic<std::uint64_t> cache_hits{0};
     std::atomic<std::uint64_t> cache_misses{0};
     std::atomic<std::uint64_t> prefetch_hits{0};
+    
+    // Default constructor
+    IOStats() = default;
+    
+    // Copy constructor (needed because atomics are not copyable)
+    IOStats(const IOStats& other) 
+        : reads(other.reads.load())
+        , read_bytes(other.read_bytes.load())
+        , cache_hits(other.cache_hits.load())
+        , cache_misses(other.cache_misses.load())
+        , prefetch_hits(other.prefetch_hits.load()) {}
+    
+    // Copy assignment
+    IOStats& operator=(const IOStats& other) {
+        if (this != &other) {
+            reads.store(other.reads.load());
+            read_bytes.store(other.read_bytes.load());
+            cache_hits.store(other.cache_hits.load());
+            cache_misses.store(other.cache_misses.load());
+            prefetch_hits.store(other.prefetch_hits.load());
+        }
+        return *this;
+    }
 };
 
 /** \brief DiskANN graph index for billion-scale vector search.
