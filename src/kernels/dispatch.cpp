@@ -41,6 +41,10 @@ inline float l2_sq_accel(std::span<const float> a, std::span<const float> b) noe
 
 namespace vesper::kernels {
 
+// Forward declare scalar ops to satisfy name lookup in this TU
+const KernelOps& get_scalar_ops() noexcept;
+
+
 namespace detail {
 
 /** \brief CPU feature detection flags. */
@@ -126,6 +130,36 @@ inline auto get_simd_override() noexcept -> std::string_view {
         if (mask == 2) return "avx512";
     }
     return "";
+
+}
+
+/** \brief New environment override for backend selection (RFC).
+ *
+ * VESPER_KERNEL_BACKEND takes precedence over legacy VESPER_SIMD_MASK.
+ * Accepted values (case-insensitive): scalar, avx2, avx512, accelerate, neon, auto.
+ * - "auto" or unknown values are ignored (no override).
+ */
+inline auto get_backend_name_override() noexcept -> std::string_view {
+    static const char* env = std::getenv("VESPER_KERNEL_BACKEND");
+    if (!env || !env[0]) return "";
+    auto eq_ci = [](std::string_view a, std::string_view b) {
+        if (a.size() != b.size()) return false;
+        for (std::size_t i = 0; i < a.size(); ++i) {
+            char ca = a[i]; char cb = b[i];
+            if (ca >= 'A' && ca <= 'Z') ca = static_cast<char>(ca - 'A' + 'a');
+            if (cb >= 'A' && cb <= 'Z') cb = static_cast<char>(cb - 'A' + 'a');
+            if (ca != cb) return false;
+        }
+        return true;
+    };
+    const std::string_view s{env};
+    if (eq_ci(s, "scalar"))      return "scalar";
+    if (eq_ci(s, "avx2"))        return "avx2";
+    if (eq_ci(s, "avx512"))      return "avx512";
+    if (eq_ci(s, "accelerate"))  return "accelerate";
+    if (eq_ci(s, "neon"))        return "neon";
+    if (eq_ci(s, "auto"))        return ""; // no override
+    return ""; // unknown -> ignore
 }
 
 } // namespace detail
@@ -180,10 +214,14 @@ const KernelOps& select_backend(std::string_view name) noexcept {
 }
 
 const KernelOps& select_backend_auto() noexcept {
-    // Check for environment override
-    const auto override = detail::get_simd_override();
-    if (!override.empty()) {
-        return select_backend(override);
+    // Check for environment override: name has precedence over legacy mask
+    const auto name_override = detail::get_backend_name_override();
+    if (!name_override.empty()) {
+        return select_backend(name_override);
+    }
+    const auto mask_override = detail::get_simd_override();
+    if (!mask_override.empty()) {
+        return select_backend(mask_override);
     }
 
 #if defined(VESPER_ENABLE_ACCELERATE) && VESPER_ENABLE_ACCELERATE && defined(__APPLE__)
