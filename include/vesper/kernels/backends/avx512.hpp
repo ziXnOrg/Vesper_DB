@@ -1,6 +1,6 @@
 #pragma once
 
-#ifdef __x86_64__
+#if defined(__x86_64__) || defined(_M_X64) || defined(_M_AMD64)
 
 /** \file avx512.hpp
  *  \brief Production AVX-512 SIMD kernels for distance computation.
@@ -29,7 +29,12 @@ namespace detail {
 /** \brief Horizontal sum of 16 floats in AVX-512 register.
  *  Uses efficient reduction tree to minimize latency.
  */
-[[gnu::always_inline]] inline auto hsum_ps_512(__m512 v) noexcept -> float {
+#ifdef _MSC_VER
+__forceinline
+#else
+[[gnu::always_inline]]
+#endif
+inline auto hsum_ps_512(__m512 v) noexcept -> float {
     // Reduce 512 to 256
     const __m256 low = _mm512_castps512_ps256(v);
     const __m256 high = _mm512_extractf32x8_ps(v, 1);
@@ -51,7 +56,12 @@ namespace detail {
 /** \brief Software prefetch for next two cache lines.
  *  Hints L1/L2 cache to load next iteration's data.
  */
-[[gnu::always_inline]] inline void prefetch_l1_512(const float* ptr) noexcept {
+#ifdef _MSC_VER
+__forceinline
+#else
+[[gnu::always_inline]]
+#endif
+inline void prefetch_l1_512(const float* ptr) noexcept {
     _mm_prefetch(reinterpret_cast<const char*>(ptr + 32), _MM_HINT_T0);
     _mm_prefetch(reinterpret_cast<const char*>(ptr + 48), _MM_HINT_T0);
 }
@@ -67,7 +77,12 @@ namespace detail {
  * \param b Second vector
  * \return L2 squared distance
  */
-[[gnu::hot]] inline auto avx512_l2_sq(std::span<const float> a, std::span<const float> b) noexcept -> float {
+#ifdef _MSC_VER
+[[maybe_unused]]
+#else
+[[gnu::hot]]
+#endif
+inline auto avx512_l2_sq(std::span<const float> a, std::span<const float> b) noexcept -> float {
     const std::size_t n = a.size();
     const float* pa = a.data();
     const float* pb = b.data();
@@ -112,7 +127,12 @@ namespace detail {
  * \param b Second vector
  * \return Inner product
  */
-[[gnu::hot]] inline auto avx512_inner_product(std::span<const float> a, std::span<const float> b) noexcept -> float {
+#ifdef _MSC_VER
+[[maybe_unused]]
+#else
+[[gnu::hot]]
+#endif
+inline auto avx512_inner_product(std::span<const float> a, std::span<const float> b) noexcept -> float {
     const std::size_t n = a.size();
     const float* pa = a.data();
     const float* pb = b.data();
@@ -155,7 +175,12 @@ namespace detail {
  * \param b Second vector
  * \return Cosine similarity in [0, 1]
  */
-[[gnu::hot]] inline auto avx512_cosine_similarity(std::span<const float> a, std::span<const float> b) noexcept -> float {
+#ifdef _MSC_VER
+[[maybe_unused]]
+#else
+[[gnu::hot]]
+#endif
+inline auto avx512_cosine_similarity(std::span<const float> a, std::span<const float> b) noexcept -> float {
     const std::size_t n = a.size();
     const float* pa = a.data();
     const float* pb = b.data();
@@ -211,7 +236,12 @@ namespace detail {
  * \param b Second vector
  * \return Cosine distance in [0, 2]
  */
-[[gnu::hot]] inline auto avx512_cosine_distance(std::span<const float> a, std::span<const float> b) noexcept -> float {
+#ifdef _MSC_VER
+[[maybe_unused]]
+#else
+[[gnu::hot]]
+#endif
+inline auto avx512_cosine_distance(std::span<const float> a, std::span<const float> b) noexcept -> float {
     return 1.0f - avx512_cosine_similarity(a, b);
 }
 
@@ -232,4 +262,4 @@ inline const KernelOps& get_avx512_ops() noexcept {
 
 } // namespace vesper::kernels
 
-#endif // __x86_64__
+#endif // defined(__x86_64__) || defined(_M_X64) || defined(_M_AMD64)

@@ -221,7 +221,7 @@ inline auto find_nearest_centroids_batch(
 
     // Find k nearest for each query
     #pragma omp parallel for
-    for (std::size_t q = 0; q < n_queries; ++q) {
+    for (int q = 0; q < static_cast<int>(n_queries); ++q) {
         const float* query_dists = all_distances.data() + q * n_centroids;
         std::uint32_t* query_indices = indices + q * k_nearest;
         float* query_nearest = distances + q * k_nearest;
@@ -264,7 +264,7 @@ inline auto compute_symmetric_distance_matrix(
     if (dim >= 8 && dim % 8 == 0) {
         // Use optimized AVX2 version
         #pragma omp parallel for schedule(dynamic, 4)
-        for (std::uint32_t i = 0; i < k; ++i) {
+        for (int i = 0; i < static_cast<int>(k); ++i) {
             const float* a_vec = centroids[i];
 
             // Diagonal is always 0
@@ -300,7 +300,7 @@ inline auto compute_symmetric_distance_matrix(
         // Fallback to standard computation
         const auto& ops = select_backend_auto();
         #pragma omp parallel for schedule(dynamic, 4)
-        for (std::uint32_t i = 0; i < k; ++i) {
+        for (int i = 0; i < static_cast<int>(k); ++i) {
             distances.set(i, i, 0.0f);
 
             for (std::uint32_t j = i + 1; j < k; ++j) {

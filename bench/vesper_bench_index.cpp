@@ -77,7 +77,7 @@ public:
             std::partial_sort(distances.begin(), distances.begin() + k, distances.end());
             
             for (std::size_t i = 0; i < k; ++i) {
-                gt[q * k + i] = distances[i].second;
+                gt[static_cast<std::size_t>(q) * k + i] = distances[i].second;
             }
         }
         
@@ -342,7 +342,7 @@ static void BM_Blueprint_Targets(benchmark::State& state) {
     
     DatasetGenerator dataset(n, dim);
     auto queries = dataset.queries(n_queries);
-    auto ground_truth = dataset.ground_truth(queries.data(), std::min(n_queries, 100UL), k);
+    auto ground_truth = dataset.ground_truth(queries.data(), std::min(n_queries, std::size_t(100)), k);
     
     // Build HNSW (for hot segments)
     index::HnswIndex hnsw;
@@ -368,7 +368,7 @@ static void BM_Blueprint_Targets(benchmark::State& state) {
             .k = k
         };
         
-        for (std::size_t q = 0; q < std::min(n_queries, 100UL); ++q) {
+        for (std::size_t q = 0; q < std::min(n_queries, std::size_t(100)); ++q) {
             auto start = std::chrono::high_resolution_clock::now();
             auto results = hnsw.search(queries.data() + q * dim, search_params);
             auto end = std::chrono::high_resolution_clock::now();

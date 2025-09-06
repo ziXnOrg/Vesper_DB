@@ -30,7 +30,7 @@ auto FastScanPq::train(const float* data, std::size_t n, std::size_t dim)
     
     // Train each subquantizer independently
     #pragma omp parallel for schedule(dynamic)
-    for (std::uint32_t sub = 0; sub < config_.m; ++sub) {
+    for (int sub = 0; sub < static_cast<int>(config_.m); ++sub) {
         train_subquantizer(data, n, sub);
     }
     
@@ -96,7 +96,7 @@ auto FastScanPq::find_nearest_code(const float* vec, std::uint32_t sub_idx) cons
 auto FastScanPq::encode(const float* data, std::size_t n, 
                        std::uint8_t* codes) const -> void {
     #pragma omp parallel for
-    for (std::size_t i = 0; i < n; ++i) {
+    for (int i = 0; i < static_cast<int>(n); ++i) {
         const float* vec = data + i * config_.m * dsub_;
         std::uint8_t* code = codes + i * config_.m;
         
@@ -139,7 +139,7 @@ auto FastScanPq::compute_lookup_tables(const float* query) const
     const auto& ops = kernels::select_backend_auto();
     
     #pragma omp parallel for
-    for (std::uint32_t sub = 0; sub < config_.m; ++sub) {
+    for (int sub = 0; sub < static_cast<int>(config_.m); ++sub) {
         const float* query_sub = query + sub * dsub_;
         float* lut = luts[sub];
         

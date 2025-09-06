@@ -778,7 +778,7 @@ auto HnswIndex::Impl::search_batch(const float* queries, std::size_t n_queries,
     std::vector<std::vector<std::pair<std::uint64_t, float>>> results(n_queries);
 
     #pragma omp parallel for
-    for (std::size_t i = 0; i < n_queries; ++i) {
+    for (int i = 0; i < static_cast<int>(n_queries); ++i) {
         const float* query = queries + i * state_.dim;
         auto result = search(query, params);
 

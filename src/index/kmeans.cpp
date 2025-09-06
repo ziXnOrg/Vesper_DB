@@ -60,7 +60,7 @@ auto kmeans_plusplus_init(const float* data, std::size_t n, std::size_t dim,
         const auto& last_centroid = centroids.back();
         
         #pragma omp parallel for
-        for (std::size_t i = 0; i < n; ++i) {
+        for (int i = 0; i < static_cast<int>(n); ++i) {
             const float dist = compute_distance(data + i * dim, last_centroid.data(), dim);
             min_distances[i] = std::min(min_distances[i], dist);
         }
@@ -92,7 +92,7 @@ auto kmeans_assign(const float* data, std::size_t n,
     double total_inertia = 0.0;
     
     #pragma omp parallel for reduction(+:total_inertia)
-    for (std::size_t i = 0; i < n; ++i) {
+    for (int i = 0; i < static_cast<int>(n); ++i) {
         const auto [idx, dist] = find_nearest_centroid(data + i * dim, centroids, dim);
         assignments[i] = idx;
         total_inertia += dist;

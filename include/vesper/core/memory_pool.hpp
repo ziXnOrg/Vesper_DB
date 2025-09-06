@@ -19,6 +19,7 @@
 #include <vector>
 #include <atomic>
 #include <thread>
+#include "vesper/platform/memory.hpp"
 
 namespace vesper::core {
 
@@ -36,14 +37,14 @@ public:
         : size_(align_up(size, ALIGNMENT))
         , used_(0) {
         buffer_ = static_cast<std::uint8_t*>(
-            std::aligned_alloc(ALIGNMENT, size_));
+            vesper::platform::aligned_allocate(size_, ALIGNMENT));
         if (!buffer_) {
             throw std::bad_alloc();
         }
     }
     
     ~MemoryArena() {
-        std::free(buffer_);
+        vesper::platform::aligned_deallocate(buffer_);
     }
     
     MemoryArena(const MemoryArena&) = delete;

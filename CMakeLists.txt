@@ -58,9 +58,17 @@ target_include_directories(vesper_headers INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/
 if (CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR CMAKE_CXX_COMPILER_ID MATCHES "GNU")
   target_compile_features(vesper_headers INTERFACE cxx_std_20)
   target_compile_options(vesper_headers INTERFACE -Wall -Wextra -Wpedantic)
+  # Enable AVX2 on x86-64 platforms
+  if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|amd64|x64")
+    target_compile_options(vesper_headers INTERFACE -mavx2 -mfma)
+  endif()
 elseif (MSVC)
   target_compile_features(vesper_headers INTERFACE cxx_std_20)
   target_compile_options(vesper_headers INTERFACE /W4)
+  # Enable AVX2 on x86-64 platforms for MSVC
+  if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|amd64|x64")
+    target_compile_options(vesper_headers INTERFACE /arch:AVX2)
+  endif()
 endif()
 
 
@@ -85,15 +93,28 @@ set(VESPER_CORE_SOURCES
     src/index/ivf_pq.cpp)
 
 # Add platform-specific sources
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+# Windows reports AMD64, Linux/macOS report x86_64
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|amd64|x64")
+    message(STATUS "Using FastScan PQ implementation for x86-64 architecture")
     list(APPEND VESPER_CORE_SOURCES src/index/pq_fastscan.cpp)
 else()
     # Use simple PQ implementation on non-x86 platforms (ARM, etc.)
+    message(STATUS "Using Simple PQ implementation for ${CMAKE_SYSTEM_PROCESSOR}")
     list(APPEND VESPER_CORE_SOURCES src/index/pq_simple.cpp)
 endif()
 
 add_library(vesper_core STATIC ${VESPER_CORE_SOURCES})
 target_link_libraries(vesper_core PRIVATE vesper_headers)
+
+# Enable AVX2 for vesper_core on x86-64
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|amd64|x64")
+  if(MSVC)
+    target_compile_options(vesper_core PRIVATE /arch:AVX2)
+  else()
+    target_compile_options(vesper_core PRIVATE -mavx2 -mfma)
+  endif()
+endif()
+
 # Feature flags as compile definitions for core library
 if (VESPER_ENABLE_ACCELERATE)
   target_compile_definitions(vesper_core PUBLIC VESPER_ENABLE_ACCELERATE=1)
@@ -290,6 +311,14 @@ endif()
   # Comprehensive test executables
   add_executable(simd_kernels_test tests/unit/simd_kernels_comprehensive_test.cpp)
   target_link_libraries(simd_kernels_test PRIVATE vesper_headers vesper_core gtest_main)
+  # Enable AVX2 for SIMD kernel tests
+  if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|amd64|x64")
+    if(MSVC)
+      target_compile_options(simd_kernels_test PRIVATE /arch:AVX2)
+    else()
+      target_compile_options(simd_kernels_test PRIVATE -mavx2 -mfma)
+    endif()
+  endif()
 
   add_executable(hnsw_thread_pool_stress_test tests/unit/hnsw_thread_pool_stress_test.cpp)
   target_link_libraries(hnsw_thread_pool_stress_test PRIVATE vesper_headers vesper_core gtest_main Threads::Threads)
@@ -301,8 +330,9 @@ endif()
   target_link_libraries(hnsw_index_test PRIVATE vesper_headers vesper_core gtest_main)
 
 
-  add_executable(hnsw_lockfree_test tests/unit/hnsw_lockfree_test.cpp)
-  target_link_libraries(hnsw_lockfree_test PRIVATE vesper_headers vesper_core gtest_main Threads::Threads)
+  # Lock-free HNSW moved to experimental/
+  # add_executable(hnsw_lockfree_test tests/unit/hnsw_lockfree_test.cpp)
+  # target_link_libraries(hnsw_lockfree_test PRIVATE vesper_headers vesper_core gtest_main Threads::Threads)
 
   add_executable(stress_test tests/stress/scalability_stress_test.cpp)
   target_link_libraries(stress_test PRIVATE vesper_headers vesper_core gtest_main Threads::Threads)
@@ -323,7 +353,7 @@ endif()
   gtest_discover_tests(simd_kernels_test)
   gtest_discover_tests(kmeans_test)
   gtest_discover_tests(hnsw_index_test)
-  gtest_discover_tests(hnsw_lockfree_test)
+  # gtest_discover_tests(hnsw_lockfree_test)
   gtest_discover_tests(stress_test)
   add_test(NAME integration_test COMMAND integration_test)
   gtest_discover_tests(hnsw_thread_pool_stress_test)
@@ -337,4 +367,26 @@ endif()
 add_executable(connectivity_smoke tools/connectivity_smoke.cpp)
 # Link against core library and headers; threads not strictly needed here
 target_link_libraries(connectivity_smoke PRIVATE vesper_headers vesper_core Threads::Threads)
+
+# Performance benchmark
+add_executable(simple_benchmark simple_benchmark.cpp)
+target_link_libraries(simple_benchmark PRIVATE vesper_headers vesper_core Threads::Threads)
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|amd64|x64")
+  if(MSVC)
+    target_compile_options(simple_benchmark PRIVATE /arch:AVX2)
+  else()
+    target_compile_options(simple_benchmark PRIVATE -mavx2 -mfma)
+  endif()
+endif()
+
+# IVF-PQ test
+add_executable(test_ivfpq test_ivfpq.cpp)
+target_link_libraries(test_ivfpq PRIVATE vesper_headers vesper_core Threads::Threads)
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|amd64|x64")
+  if(MSVC)
+    target_compile_options(test_ivfpq PRIVATE /arch:AVX2)
+  else()
+    target_compile_options(test_ivfpq PRIVATE -mavx2 -mfma)
+  endif()
+endif()
 

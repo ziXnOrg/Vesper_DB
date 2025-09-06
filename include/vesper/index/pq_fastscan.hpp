@@ -260,7 +260,7 @@ inline auto compute_batch_distances(
     float* distances) -> void {
     
     #pragma omp parallel for
-    for (std::size_t q = 0; q < n_queries; ++q) {
+    for (int q = 0; q < static_cast<int>(n_queries); ++q) {
         const float* query = queries + q * pq.dimension();
         float* query_dists = distances + q * (blocks.size() * blocks[0].size());
         

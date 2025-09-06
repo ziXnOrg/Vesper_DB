@@ -1,8 +1,12 @@
 #include "vesper/kernels/dispatch.hpp"
 #include "vesper/kernels/backends/scalar.hpp"
 
-#ifdef __x86_64__
-#include <cpuid.h>
+#if defined(__x86_64__) || defined(_M_X64) || defined(_M_AMD64)
+#ifdef _MSC_VER
+#include <intrin.h>  // For __cpuid on MSVC
+#else
+#include <cpuid.h>  // For __get_cpuid on GCC/Clang
+#endif
 #include "vesper/kernels/backends/avx2.hpp"
 // Only include AVX-512 if explicitly enabled
 #ifdef __AVX512F__
@@ -60,13 +64,34 @@ struct CpuFeatures {
  * Thread-safe through atomic initialization.
  * Results cached for process lifetime.
  */
-[[gnu::cold]] inline auto detect_cpu_features() noexcept -> CpuFeatures {
+#ifdef _MSC_VER
+[[maybe_unused]]
+#else
+[[gnu::cold]]
+#endif
+inline auto detect_cpu_features() noexcept -> CpuFeatures {
     CpuFeatures features{};
 
-#ifdef __x86_64__
+#if defined(__x86_64__) || defined(_M_X64) || defined(_M_AMD64)
     // Check for AVX2 and FMA support
+#ifdef _MSC_VER
+    int cpu_info[4];
+    __cpuid(cpu_info, 0);
+    const unsigned int max_level = cpu_info[0];
+    
+    // Check for AVX2 (CPUID.07H:EBX.AVX2[bit 5])
+    if (max_level >= 7) {
+        __cpuidex(cpu_info, 7, 0);
+        features.has_avx2 = (cpu_info[1] & (1u << 5)) != 0;
+        // Check for AVX-512F (CPUID.07H:EBX.AVX512F[bit 16])
+        features.has_avx512f = (cpu_info[1] & (1u << 16)) != 0;
+    }
+    
+    // Check for FMA (CPUID.01H:ECX.FMA[bit 12])
+    __cpuid(cpu_info, 1);
+    features.has_fma = (cpu_info[2] & (1u << 12)) != 0;
+#else
     unsigned int eax, ebx, ecx, edx;
-
     // Check maximum supported CPUID level
     if (__get_cpuid(0, &eax, &ebx, &ecx, &edx)) {
         const unsigned int max_level = eax;
@@ -86,6 +111,7 @@ struct CpuFeatures {
         }
     }
 #endif
+#endif  // defined(__x86_64__) || defined(_M_X64) || defined(_M_AMD64)
 
 #ifdef __aarch64__
     // ARM NEON is mandatory on AArch64
@@ -176,7 +202,7 @@ const KernelOps& select_backend(std::string_view name) noexcept {
     }
 #endif
 
-#ifdef __x86_64__
+#if defined(__x86_64__) || defined(_M_X64) || defined(_M_AMD64)
     if (name == "avx2") {
         const auto& features = detail::get_cpu_features();
         if (features.has_avx2 && features.has_fma) {
@@ -232,7 +258,7 @@ const KernelOps& select_backend_auto() noexcept {
     // Auto-detect best available backend
     const auto& features = detail::get_cpu_features();
 
-#ifdef __x86_64__
+#if defined(__x86_64__) || defined(_M_X64) || defined(_M_AMD64)
 #ifdef __AVX512F__
     // Prefer AVX-512 if available
     if (features.has_avx512f) {

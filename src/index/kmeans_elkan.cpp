@@ -66,7 +66,7 @@ auto KmeansElkan::initialize_bounds(const float* data, std::size_t n, std::size_
     std::vector<PointBounds> bounds(n);
     
     #pragma omp parallel for schedule(dynamic, 256)
-    for (std::size_t i = 0; i < n; ++i) {
+    for (int i = 0; i < static_cast<int>(n); ++i) {
         const float* point = data + i * dim;
         bounds[i].lower.resize(k);
         
@@ -104,8 +104,8 @@ auto KmeansElkan::update_centroid_distances(
     std::vector<std::vector<float>> dist(k, std::vector<float>(k, 0.0f));
     
     #pragma omp parallel for collapse(2) if(k > 16)
-    for (std::uint32_t i = 0; i < k; ++i) {
-        for (std::uint32_t j = i + 1; j < k; ++j) {
+    for (int i = 0; i < static_cast<int>(k); ++i) {
+        for (int j = i + 1; j < static_cast<int>(k); ++j) {
             const float d = compute_distance(
                 centroids[i].data(), centroids[j].data(), dim);
             dist[i][j] = d;
@@ -143,7 +143,7 @@ auto KmeansElkan::update_centroid_distances_aligned(
     std::vector<float> s_half(k);
     
     #pragma omp parallel for
-    for (std::uint32_t i = 0; i < k; ++i) {
+    for (int i = 0; i < static_cast<int>(k); ++i) {
         const auto row = dist.row(i);
         float min_dist = std::numeric_limits<float>::max();
         
@@ -184,7 +184,7 @@ auto KmeansElkan::assign_with_bounds(const float* data, std::size_t n, std::size
     double total_inertia = 0.0;
     
     #pragma omp parallel for schedule(dynamic, 256) reduction(+:total_inertia)
-    for (std::size_t i = 0; i < n; ++i) {
+    for (int i = 0; i < static_cast<int>(n); ++i) {
         const float* point = data + i * dim;
         auto& b = bounds[i];
         
@@ -256,7 +256,8 @@ auto KmeansElkan::update_bounds(std::vector<PointBounds>& bounds,
     float max_shift = *std::max_element(centroid_shift.begin(), centroid_shift.end());
     
     #pragma omp parallel for
-    for (auto& b : bounds) {
+    for (int idx = 0; idx < static_cast<int>(bounds.size()); ++idx) {
+        auto& b = bounds[idx];
         // Update upper bound
         b.upper += centroid_shift[b.assignment];
         b.upper_tight = false;
@@ -326,7 +327,7 @@ auto KmeansElkan::cluster(const float* data, std::size_t n, std::size_t dim,
         
         std::vector<float> centroid_shift(config.k);
         #pragma omp parallel for
-        for (std::uint32_t c = 0; c < config.k; ++c) {
+        for (int c = 0; c < static_cast<int>(config.k); ++c) {
             std::vector<float> old_centroid = centroids[c];
             // Convert PooledVector to std::vector for the function call
             std::vector<std::size_t> indices(cluster_indices[c].begin(), 
@@ -398,7 +399,7 @@ auto kmeans_parallel_init(const float* data, std::size_t n, std::size_t dim,
         std::vector<float> min_distances(n);
         
         #pragma omp parallel for
-        for (std::size_t i = 0; i < n; ++i) {
+        for (int i = 0; i < static_cast<int>(n); ++i) {
             const float* point = data + i * dim;
             float min_dist = std::numeric_limits<float>::max();
             

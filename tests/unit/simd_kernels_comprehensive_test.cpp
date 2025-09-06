@@ -1,8 +1,6 @@
 #include <gtest/gtest.h>
 #include "vesper/kernels/dispatch.hpp"
-#include "vesper/kernels/backends/scalar.hpp"
-#include "vesper/kernels/backends/avx2.hpp"
-#include "vesper/kernels/backends/avx512.hpp"
+// Backend headers not needed - use dispatch API
 
 #include <random>
 #include <numeric>
@@ -11,6 +9,69 @@
 
 namespace vesper::kernels {
 namespace {
+
+// CPU feature detection helpers
+#if defined(__x86_64__) || defined(_M_X64) || defined(_M_AMD64)
+#ifdef _MSC_VER
+#include <intrin.h>
+inline bool cpu_has_avx2() {
+    int cpu_info[4];
+    __cpuid(cpu_info, 0);
+    const unsigned int max_level = cpu_info[0];
+    if (max_level >= 7) {
+        __cpuidex(cpu_info, 7, 0);
+        bool has_avx2 = (cpu_info[1] & (1u << 5)) != 0;
+        __cpuid(cpu_info, 1);
+        bool has_fma = (cpu_info[2] & (1u << 12)) != 0;
+        return has_avx2 && has_fma;
+    }
+    return false;
+}
+
+inline bool cpu_has_avx512() {
+    int cpu_info[4];
+    __cpuid(cpu_info, 0);
+    const unsigned int max_level = cpu_info[0];
+    if (max_level >= 7) {
+        __cpuidex(cpu_info, 7, 0);
+        return (cpu_info[1] & (1u << 16)) != 0;
+    }
+    return false;
+}
+#else
+#include <cpuid.h>
+inline bool cpu_has_avx2() {
+    unsigned int eax, ebx, ecx, edx;
+    if (__get_cpuid(0, &eax, &ebx, &ecx, &edx)) {
+        const unsigned int max_level = eax;
+        if (max_level >= 7) {
+            __cpuid_count(7, 0, eax, ebx, ecx, edx);
+            bool has_avx2 = (ebx & (1u << 5)) != 0;
+            if (__get_cpuid(1, &eax, &ebx, &ecx, &edx)) {
+                bool has_fma = (ecx & (1u << 12)) != 0;
+                return has_avx2 && has_fma;
+            }
+        }
+    }
+    return false;
+}
+
+inline bool cpu_has_avx512() {
+    unsigned int eax, ebx, ecx, edx;
+    if (__get_cpuid(0, &eax, &ebx, &ecx, &edx)) {
+        const unsigned int max_level = eax;
+        if (max_level >= 7) {
+            __cpuid_count(7, 0, eax, ebx, ecx, edx);
+            return (ebx & (1u << 16)) != 0;
+        }
+    }
+    return false;
+}
+#endif
+#else
+inline bool cpu_has_avx2() { return false; }
+inline bool cpu_has_avx512() { return false; }
+#endif
 
 /** \brief Test fixture for SIMD kernel validation. */
 class SimdKernelTest : public ::testing::Test {
@@ -110,20 +171,21 @@ protected:
 // L2 Distance Tests
 
 TEST_F(SimdKernelTest, L2Distance_ScalarVsAVX2_Equivalence) {
-    if (!cpu_has_avx2()) {
+    const auto& scalar_ops = select_backend("scalar");
+    const auto& avx2_ops = select_backend("avx2");
+    
+    // Skip if AVX2 not available (avx2 will fall back to scalar)
+    if (&scalar_ops == &avx2_ops) {
         GTEST_SKIP() << "AVX2 not available";
     }
-    
-    const auto& scalar_ops = backends::ScalarBackend{};
-    const auto& avx2_ops = backends::Avx2Backend{};
     
     // Test various dimensions
     for (std::size_t dim : {7, 8, 15, 16, 31, 32, 63, 64, 127, 128, 255, 256, 1024}) {
         std::vector<float> a(dim), b(dim);
         GenerateNormalVectors(a, b, dim);
         
-        float scalar_result = scalar_ops.l2_sq(a, b);
-        float avx2_result = avx2_ops.l2_sq(a, b);
+        float scalar_result = scalar_ops.l2_sq(std::span<const float>(a), std::span<const float>(b));
+        float avx2_result = avx2_ops.l2_sq(std::span<const float>(a), std::span<const float>(b));
         
         EXPECT_TRUE(CompareWithULP(scalar_result, avx2_result, 8))
             << "Dimension: " << dim 
@@ -172,19 +234,20 @@ TEST_F(SimdKernelTest, L2Distance_NumericalStability) {
 // Inner Product Tests
 
 TEST_F(SimdKernelTest, InnerProduct_ScalarVsAVX2_Equivalence) {
-    if (!cpu_has_avx2()) {
+    const auto& scalar_ops = select_backend("scalar");
+    const auto& avx2_ops = select_backend("avx2");
+    
+    // Skip if AVX2 not available (avx2 will fall back to scalar)
+    if (&scalar_ops == &avx2_ops) {
         GTEST_SKIP() << "AVX2 not available";
     }
-    
-    const auto& scalar_ops = backends::ScalarBackend{};
-    const auto& avx2_ops = backends::Avx2Backend{};
     
     for (std::size_t dim : {8, 16, 32, 64, 128, 256}) {
         std::vector<float> a(dim), b(dim);
         GenerateNormalVectors(a, b, dim);
         
-        float scalar_result = scalar_ops.inner_product(a, b);
-        float avx2_result = avx2_ops.inner_product(a, b);
+        float scalar_result = scalar_ops.inner_product(std::span<const float>(a), std::span<const float>(b));
+        float avx2_result = avx2_ops.inner_product(std::span<const float>(a), std::span<const float>(b));
         
         EXPECT_TRUE(CompareWithULP(scalar_result, avx2_result, 8))
             << "Dimension: " << dim;
@@ -195,8 +258,8 @@ TEST_F(SimdKernelTest, InnerProduct_Properties) {
     const auto& ops = select_backend_auto();
     
     // Commutative
-    float ab = ops.inner_product(normal_a_, normal_b_);
-    float ba = ops.inner_product(normal_b_, normal_a_);
+    float ab = ops.inner_product(std::span<const float>(normal_a_), std::span<const float>(normal_b_));
+    float ba = ops.inner_product(std::span<const float>(normal_b_), std::span<const float>(normal_a_));
     EXPECT_FLOAT_EQ(ab, ba);
     
     // Distributive
@@ -303,7 +366,7 @@ TEST_F(SimdKernelTest, BackendSelection_Correctness) {
     #ifdef __AVX512F__
     if (cpu_has_avx512()) {
         // Should select AVX-512
-        const auto& avx512_backend = backends::Avx512Backend{};
+        const auto& avx512_backend = select_backend("avx512");
         float auto_result = auto_backend.l2_sq(normal_a_, normal_b_);
         float avx512_result = avx512_backend.l2_sq(normal_a_, normal_b_);
         EXPECT_FLOAT_EQ(auto_result, avx512_result);
@@ -313,7 +376,7 @@ TEST_F(SimdKernelTest, BackendSelection_Correctness) {
     #ifdef __AVX2__
     if (cpu_has_avx2() && !cpu_has_avx512()) {
         // Should select AVX2
-        const auto& avx2_backend = backends::Avx2Backend{};
+        const auto& avx2_backend = select_backend("avx2");
         float auto_result = auto_backend.l2_sq(normal_a_, normal_b_);
         float avx2_result = avx2_backend.l2_sq(normal_a_, normal_b_);
         EXPECT_FLOAT_EQ(auto_result, avx2_result);
@@ -324,7 +387,7 @@ TEST_F(SimdKernelTest, BackendSelection_Correctness) {
 // Cross-validation Tests
 
 TEST_F(SimdKernelTest, CrossValidation_AllBackends) {
-    const auto& scalar = backends::ScalarBackend{};
+    const auto& scalar = select_backend("scalar");
     
     // Generate test vector
     const std::size_t dim = 128;
@@ -337,7 +400,7 @@ TEST_F(SimdKernelTest, CrossValidation_AllBackends) {
     
     #ifdef __AVX2__
     if (cpu_has_avx2()) {
-        const auto& avx2 = backends::Avx2Backend{};
+        const auto& avx2 = select_backend("avx2");
         EXPECT_TRUE(CompareWithULP(scalar_l2, avx2.l2_sq(a, b), 8));
         EXPECT_TRUE(CompareWithULP(scalar_ip, avx2.inner_product(a, b), 8));
         EXPECT_TRUE(CompareWithULP(scalar_cos, avx2.cosine_similarity(a, b), 8));
@@ -346,7 +409,7 @@ TEST_F(SimdKernelTest, CrossValidation_AllBackends) {
     
     #ifdef __AVX512F__
     if (cpu_has_avx512()) {
-        const auto& avx512 = backends::Avx512Backend{};
+        const auto& avx512 = select_backend("avx512");
         EXPECT_TRUE(CompareWithULP(scalar_l2, avx512.l2_sq(a, b), 8));
         EXPECT_TRUE(CompareWithULP(scalar_ip, avx512.inner_product(a, b), 8));
         EXPECT_TRUE(CompareWithULP(scalar_cos, avx512.cosine_similarity(a, b), 8));

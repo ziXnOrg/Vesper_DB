@@ -21,6 +21,8 @@
 #include <new>
 #include <utility>
 #include <limits>
+#include "vesper/platform/memory.hpp"
+#include "vesper/platform/intrinsics.hpp"
 
 namespace vesper::index {
 
@@ -45,12 +47,12 @@ public:
     AlignedAllocator(const AlignedAllocator<U, Alignment>&) noexcept {}
     
     [[nodiscard]] auto allocate(size_type n) -> T* {
-        if (n > std::numeric_limits<size_type>::max() / sizeof(T)) {
+        if (n > (std::numeric_limits<size_type>::max)() / sizeof(T)) {
             throw std::bad_array_new_length();
         }
         
         const size_type bytes = n * sizeof(T);
-        void* ptr = std::aligned_alloc(Alignment, align_up(bytes, Alignment));
+        void* ptr = vesper::platform::aligned_allocate(bytes, Alignment);
         
         if (!ptr) {
             throw std::bad_alloc();
@@ -60,7 +62,7 @@ public:
     }
     
     auto deallocate(T* ptr, size_type) noexcept -> void {
-        std::free(ptr);
+        vesper::platform::aligned_deallocate(ptr);
     }
     
     template<typename U>
@@ -74,9 +76,7 @@ public:
     }
     
 private:
-    static constexpr auto align_up(size_type n, size_type alignment) noexcept -> size_type {
-        return (n + alignment - 1) & ~(alignment - 1);
-    }
+    // align_up is now provided by platform::align_up
 };
 
 /** \brief Contiguous aligned buffer for centroid storage.
@@ -137,7 +137,7 @@ public:
     
     /** \brief Load centroids from vector of vectors. */
     auto from_vectors(const std::vector<std::vector<float>>& centroids) -> void {
-        for (std::uint32_t i = 0; i < std::min(k_, static_cast<std::uint32_t>(centroids.size())); ++i) {
+        for (std::uint32_t i = 0; i < (std::min)(k_, static_cast<std::uint32_t>(centroids.size())); ++i) {
             set_centroid(i, centroids[i]);
         }
     }
@@ -163,15 +163,15 @@ public:
     /** \brief Prefetch centroid for reading. */
     auto prefetch_read(std::uint32_t i) const noexcept -> void {
         const float* ptr = (*this)[i];
-        __builtin_prefetch(ptr, 0, 3);
-        __builtin_prefetch(ptr + 16, 0, 3);
+        vesper::platform::prefetch_read(ptr, vesper::platform::prefetch_hint::all_levels);
+        vesper::platform::prefetch_read(ptr + 16, vesper::platform::prefetch_hint::all_levels);
     }
     
     /** \brief Prefetch centroid for writing. */
     auto prefetch_write(std::uint32_t i) noexcept -> void {
         float* ptr = (*this)[i];
-        __builtin_prefetch(ptr, 1, 3);
-        __builtin_prefetch(ptr + 16, 1, 3);
+        vesper::platform::prefetch_write(ptr, vesper::platform::prefetch_hint::all_levels);
+        vesper::platform::prefetch_write(ptr + 16, vesper::platform::prefetch_hint::all_levels);
     }
     
 private:
@@ -235,8 +235,8 @@ public:
     
     /** \brief Load from vector of vectors. */
     auto from_vectors(const std::vector<std::vector<float>>& matrix) -> void {
-        for (std::uint32_t i = 0; i < std::min(k_, static_cast<std::uint32_t>(matrix.size())); ++i) {
-            for (std::uint32_t j = 0; j < std::min(k_, static_cast<std::uint32_t>(matrix[i].size())); ++j) {
+        for (std::uint32_t i = 0; i < (std::min)(k_, static_cast<std::uint32_t>(matrix.size())); ++i) {
+            for (std::uint32_t j = 0; j < (std::min)(k_, static_cast<std::uint32_t>(matrix[i].size())); ++j) {
                 set(i, j, matrix[i][j]);
             }
         }

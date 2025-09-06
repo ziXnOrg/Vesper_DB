@@ -1,9 +1,15 @@
 #include "vesper/index/ivf_pq.hpp"
 #include "vesper/index/kmeans_elkan.hpp"
-#ifdef __x86_64__
+#if defined(__x86_64__) || defined(_M_X64) || defined(_M_AMD64)
 #include "vesper/index/pq_fastscan.hpp"
+namespace vesper::index {
+    using PqImpl = FastScanPq;
+}
 #else
 #include "vesper/index/pq_simple.hpp"
+namespace vesper::index {
+    using PqImpl = SimplePq;
+}
 #endif
 #include "vesper/kernels/dispatch.hpp"
 #include "vesper/kernels/batch_distances.hpp"
@@ -31,7 +37,7 @@ public:
         std::size_t dsub{0};
         IvfPqTrainParams params;
         AlignedCentroidBuffer coarse_centroids{1, 1};
-        std::unique_ptr<FastScanPq> pq;
+        std::unique_ptr<PqImpl> pq;
         std::vector<float> rotation_matrix;  // For OPQ
     } state_;
     
@@ -197,7 +203,7 @@ auto IvfPqIndex::Impl::train_product_quantizer(const float* data, std::size_t n)
         .block_size = 32
     };
     
-    state_.pq = std::make_unique<FastScanPq>(pq_config);
+    state_.pq = std::make_unique<PqImpl>(pq_config);
     
     if (auto result = state_.pq->train(training_data, n, state_.dim); 
         !result.has_value()) {
@@ -231,7 +237,7 @@ auto IvfPqIndex::Impl::apply_rotation(const float* input, float* output, std::si
     
     // Matrix multiplication: output = input * rotation
     #pragma omp parallel for
-    for (std::size_t i = 0; i < n; ++i) {
+    for (int i = 0; i < static_cast<int>(n); ++i) {
         const float* vec_in = input + i * state_.dim;
         float* vec_out = output + i * state_.dim;
         
@@ -276,7 +282,7 @@ auto IvfPqIndex::Impl::add(const std::uint64_t* ids, const float* data, std::siz
     std::vector<std::uint32_t> assignments(n);
     
     #pragma omp parallel for
-    for (std::size_t i = 0; i < n; ++i) {
+    for (int i = 0; i < static_cast<int>(n); ++i) {
         const float* vec = data + i * state_.dim;
         
         // Find nearest coarse centroid
@@ -441,7 +447,7 @@ auto IvfPqIndex::Impl::search_batch(const float* queries, std::size_t n_queries,
     std::vector<std::vector<std::pair<std::uint64_t, float>>> results(n_queries);
     
     #pragma omp parallel for
-    for (std::size_t i = 0; i < n_queries; ++i) {
+    for (int i = 0; i < static_cast<int>(n_queries); ++i) {
         const float* query = queries + i * state_.dim;
         auto result = search(query, params);
         

@@ -5,6 +5,7 @@
 #include <numeric>
 #include <algorithm>
 #include <unordered_set>
+#include <chrono>
 
 namespace vesper::index {
 namespace {
@@ -104,8 +105,10 @@ TEST_F(KmeansTest, Lloyd_BasicClustering) {
         .k = 10,
         .max_iter = 100,
         .epsilon = 1e-4f,
-        .n_redo = 1,
-        .seed = 42
+        .seed = 42,
+        .balanced = false,
+        .verbose = false,
+        .n_redo = 1
     };
     
     auto result = kmeans_cluster(data_.data(), n_, dim_, params);
@@ -157,8 +160,10 @@ TEST_F(KmeansTest, Lloyd_MultipleRuns) {
         .k = 10,
         .max_iter = 50,
         .epsilon = 1e-4f,
-        .n_redo = 5,  // Multiple runs
-        .seed = 42
+        .seed = 42,
+        .balanced = false,
+        .verbose = false,
+        .n_redo = 5  // Multiple runs
     };
     
     auto result = kmeans_cluster(data_.data(), n_, dim_, params);
@@ -395,9 +400,9 @@ TEST_F(KmeansTest, Performance_ScalabilityWithK) {
             .seed = 42
         };
         
-        auto start = std::chrono::high_resolution_clock::now();
+        auto start = std::chrono::steady_clock::now();
         auto result = kmeans_cluster(data_.data(), 1000, dim_, params);
-        auto end = std::chrono::high_resolution_clock::now();
+        auto end = std::chrono::steady_clock::now();
         
         ASSERT_TRUE(result.has_value());
         
@@ -418,7 +423,7 @@ TEST_F(KmeansTest, Performance_ScalabilityWithK) {
 
 TEST_F(KmeansTest, ClusterQuality_Metrics) {
     KmeansParams params{
-        .k = k_,
+        .k = static_cast<std::uint32_t>(k_),
         .max_iter = 100,
         .epsilon = 1e-6f,
         .seed = 42
