@@ -1,9 +1,254 @@
-.DS_Store
+# Build directories
 build/
+out/
 cmake-build-*/
-.vscode/
-.idea/
-compile_commands.json
+Build/
+Debug/
+Release/
+MinSizeRel/
+RelWithDebInfo/
 
-# Ignore all documentation under docs/
-docs/
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+Testing/
+Makefile
+*.cmake
+!cmake/*.cmake
+
+# Compiled objects
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dll
+*.dylib
+*.exe
+*.out
+*.app
+*.pdb
+*.ilk
+*.exp
+
+# Precompiled headers
+*.gch
+*.pch
+*.ipch
+
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.vcxproj.filters
+*.vcxproj.user
+*.VC.db
+*.VC.opendb
+ipch/
+*.aps
+*.ncb
+*.opensdf
+*.sdf
+*.cachefile
+*.psess
+*.vsp
+*.vspx
+*.sap
+
+# Visual Studio Code
+.vscode/
+*.code-workspace
+
+# CLion / JetBrains
+.idea/
+*.iml
+*.iws
+
+# Xcode
+*.xcodeproj/
+*.xcworkspace/
+DerivedData/
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+xcuserdata/
+
+# Qt Creator
+*.pro.user
+*.pro.user.*
+*.qbs.user
+*.qbs.user.*
+*.moc
+moc_*.cpp
+moc_*.h
+qrc_*.cpp
+ui_*.h
+*.qmlc
+*.jsc
+
+# Ninja
+.ninja_deps
+.ninja_log
+build.ninja
+
+# Backup files
+*.bak
+*.bak2
+*.backup
+*.old
+*.orig
+*.swp
+*.swo
+*~
+.*.swp
+.*.swo
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# Test and benchmark artifacts
+test_ivfpq
+test_ivfpq_large
+test_avx2
+test_avx2_perf
+bench_simd
+benchmark_vesper
+simple_benchmark
+check_cpu
+*.test
+*.bench
+
+# Temporary files
+*.tmp
+*.temp
+/tmp/
+/temp/
+
+# Documentation build
+docs/_build/
+docs/html/
+docs/latex/
+doxygen/
+*.doxygen
+
+# Coverage
+*.gcov
+*.gcda
+*.gcno
+coverage/
+*.coverage
+*.coveragexml
+coverage.info
+htmlcov/
+
+# Profiling
+*.prof
+gmon.out
+callgrind.out.*
+perf.data
+perf.data.old
+
+# Package files
+*.tar.gz
+*.zip
+*.7z
+*.rar
+*.deb
+*.rpm
+*.dmg
+*.iso
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.tox/
+venv/
+env/
+
+# Logs
+*.log
+*.tlog
+*.lastbuildstate
+
+# Core dumps
+core
+core.*
+vgcore.*
+
+# Dependency directories
+external/
+third_party/
+vendor/
+deps/
+!cmake/external/
+
+# Local configuration
+.env
+.env.local
+config.local.*
+*.local
+
+# IDE project files that might be generated
+compile_commands.json
+.clangd/
+.cache/
+
+# Windows batch files for local use
+rebuild.bat
+clean.bat
+run_tests.bat
+
+# Benchmark results (keep tracked ones)
+!BENCHMARK_RESULTS.md
+benchmark_results_*.txt
+benchmark_results_*.json
+
+# Performance analysis
+perf_*.txt
+perf_*.json
+profile_*.txt
+
+# Vesper specific
+*.wal
+*.snapshot
+*.vesper
+*.vsp_idx
+checkpoint_*
+manifest_*
+
+# Fuzzing
+corpus/
+crashes/
+hangs/
+*.fuzz
+
+# ASAN/TSAN/UBSAN
+*.asan
+*.tsan
+*.ubsan
+asan_log.*
+
+# Keep important markdown files
+!README.md
+!CLAUDE.md
+!CODING_STANDARDS.md
+!TESTING.md
+!WINDOWS_PLATFORM_SUPPORT.md
+!PERFORMANCE_IMPROVEMENTS.md
+!blueprint.md
+!prompt-dev-roadmap.md
