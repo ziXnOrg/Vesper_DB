@@ -197,7 +197,7 @@ public:
                 if (hnsw_index_) {
                     HnswSearchParams params;
                     params.k = config.k;
-                    params.ef = config.ef_search;
+                    params.efSearch = config.ef_search;
                     return hnsw_index_->search(query, params);
                 }
                 break;
@@ -217,8 +217,16 @@ public:
                 if (disk_graph_index_) {
                     VamanaSearchParams params;
                     params.k = config.k;
-                    params.search_L = config.l_search;
-                    return disk_graph_index_->search(std::span<const float>(query, dimension_), params);
+                    params.beam_width = config.l_search;
+                    auto result = disk_graph_index_->search(std::span<const float>(query, dimension_), params);
+                    if (!result) return std::vesper_unexpected(result.error());
+                    // Convert from <float, uint32_t> to <uint64_t, float>
+                    std::vector<std::pair<std::uint64_t, float>> converted;
+                    converted.reserve(result->size());
+                    for (const auto& [score, id] : *result) {
+                        converted.emplace_back(static_cast<std::uint64_t>(id), score);
+                    }
+                    return converted;
                 }
                 break;
         }
@@ -430,21 +438,27 @@ private:
             case IndexType::IVF_PQ: {
                 ivf_pq_index_ = std::make_unique<IvfPqIndex>();
                 auto result = ivf_pq_index_->train(vectors, dimension_, n, 
-                                                   config.ivf_params, config.pq_params);
-                if (!result) return result;
+                                                   config.ivf_params);
+                if (!result) {
+                    return std::vesper_unexpected(result.error());
+                }
                 
                 // Add vectors
                 std::vector<std::uint64_t> ids(n);
                 std::iota(ids.begin(), ids.end(), 0);
-                auto add_result = ivf_pq_index_->add_batch(ids.data(), vectors, n);
+                auto add_result = ivf_pq_index_->add(ids.data(), vectors, n);
                 if (!add_result) return add_result;
                 break;
             }
             
             case IndexType::DiskANN: {
                 disk_graph_index_ = std::make_unique<DiskGraphIndex>(dimension_);
-                auto result = disk_graph_index_->build(vectors, n, config.vamana_params);
-                if (!result) return result;
+                auto result = disk_graph_index_->build(
+                    std::span<const float>(vectors, n * dimension_), 
+                    config.vamana_params);
+                if (!result) {
+                    return std::vesper_unexpected(result.error());
+                }
                 break;
             }
         }

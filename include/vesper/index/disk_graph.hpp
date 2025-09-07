@@ -33,6 +33,7 @@
 
 #include "vesper/error.hpp"
 #include "vesper/index/product_quantizer.hpp"
+#include "vesper/cache/lru_cache.hpp"
 
 namespace vesper::index {
 

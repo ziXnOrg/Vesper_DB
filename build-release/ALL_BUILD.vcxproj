@@ -1,0 +1,293 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <PreferredToolArchitecture>x64</PreferredToolArchitecture>
+  </PropertyGroup>
+  <PropertyGroup>
+    <ResolveNugetPackages>false</ResolveNugetPackages>
+  </PropertyGroup>
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="MinSizeRel|x64">
+      <Configuration>MinSizeRel</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="RelWithDebInfo|x64">
+      <Configuration>RelWithDebInfo</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{26DB46FE-5897-31E4-89D6-E497F4B725B4}</ProjectGuid>
+    <Keyword>Win32Proj</Keyword>
+    <WindowsTargetPlatformVersion>10.0.26100.0</WindowsTargetPlatformVersion>
+    <Platform>x64</Platform>
+    <ProjectName>ALL_BUILD</ProjectName>
+    <VCProjectUpgraderObjectName>NoUpgrade</VCProjectUpgraderObjectName>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>Utility</ConfigurationType>
+    <CharacterSet>MultiByte</CharacterSet>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>Utility</ConfigurationType>
+    <CharacterSet>MultiByte</CharacterSet>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'" Label="Configuration">
+    <ConfigurationType>Utility</ConfigurationType>
+    <CharacterSet>MultiByte</CharacterSet>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'" Label="Configuration">
+    <ConfigurationType>Utility</ConfigurationType>
+    <CharacterSet>MultiByte</CharacterSet>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup>
+    <_ProjectFileVersion>10.0.20506.1</_ProjectFileVersion>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(Platform)\$(Configuration)\$(ProjectName)\</IntDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(Platform)\$(Configuration)\$(ProjectName)\</IntDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">$(Platform)\$(Configuration)\$(ProjectName)\</IntDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">$(Platform)\$(Configuration)\$(ProjectName)\</IntDir>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <Midl>
+      <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
+      <HeaderFileName>%(Filename).h</HeaderFileName>
+      <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
+      <InterfaceIdentifierFileName>%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>%(Filename)_p.c</ProxyFileName>
+    </Midl>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Midl>
+      <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
+      <HeaderFileName>%(Filename).h</HeaderFileName>
+      <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
+      <InterfaceIdentifierFileName>%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>%(Filename)_p.c</ProxyFileName>
+    </Midl>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">
+    <Midl>
+      <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
+      <HeaderFileName>%(Filename).h</HeaderFileName>
+      <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
+      <InterfaceIdentifierFileName>%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>%(Filename)_p.c</ProxyFileName>
+    </Midl>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">
+    <Midl>
+      <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
+      <HeaderFileName>%(Filename).h</HeaderFileName>
+      <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
+      <InterfaceIdentifierFileName>%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>%(Filename)_p.c</ProxyFileName>
+    </Midl>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <CustomBuild Include="C:\Users\cisco\Desktop\dev\research\Vesper\CMakeLists.txt">
+      <UseUtf8Encoding>Always</UseUtf8Encoding>
+      <Message Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Building Custom Rule C:/Users/cisco/Desktop/dev/research/Vesper/CMakeLists.txt</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SC:/Users/cisco/Desktop/dev/research/Vesper -BC:/Users/cisco/Desktop/dev/research/Vesper/build-release --check-stamp-file C:/Users/cisco/Desktop/dev/research/Vesper/build-release/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:\Program Files\CMake\share\cmake-4.1\Modules\CMakeCInformation.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CMakeCXXInformation.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CMakeCommonLanguageInclude.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CMakeGenericSystem.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CMakeInitializeConfigs.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CMakeLanguageInformation.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CMakeParseImplicitLinkInfo.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CMakeRCInformation.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CMakeSystemSpecificInformation.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CMakeSystemSpecificInitialize.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CTest.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CTestTargets.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CTestUseLaunchers.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CheckCSourceCompiles.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CheckIncludeFile.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CheckLibraryExists.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Compiler\CMakeCommonCompilerMacros.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Compiler\MSVC-C.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Compiler\MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Compiler\MSVC.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\DartConfiguration.tcl.in;C:\Program Files\CMake\share\cmake-4.1\Modules\ExternalProject\shared_internal_commands.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\FetchContent.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\FetchContent\CMakeLists.cmake.in;C:\Program Files\CMake\share\cmake-4.1\Modules\FindGit.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\FindOpenMP.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\FindPackageHandleStandardArgs.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\FindPackageMessage.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\FindPython\Support.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\FindPython3.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\FindThreads.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\GoogleTest.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Internal\CMakeCLinkerInformation.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Internal\CMakeCXXLinkerInformation.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Internal\CMakeCommonLinkerInformation.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Internal\CheckSourceCompiles.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Linker\MSVC-C.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Linker\MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Linker\MSVC.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Platform\Linker\Windows-MSVC-C.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Platform\Linker\Windows-MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Platform\Linker\Windows-MSVC.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Platform\Windows-Initialize.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Platform\Windows-MSVC-C.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Platform\Windows-MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Platform\Windows-MSVC.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Platform\Windows.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Platform\WindowsPaths.cmake;C:\Program Files\CMake\share\cmake-4.1\Templates\CTestScript.cmake.in;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\CMakeFiles\4.1.1\CMakeCCompiler.cmake;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\CMakeFiles\4.1.1\CMakeCXXCompiler.cmake;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\CMakeFiles\4.1.1\CMakeRCCompiler.cmake;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\CMakeFiles\4.1.1\CMakeSystem.cmake;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-src\extras\Catch.cmake;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:\Users\cisco\Desktop\dev\research\Vesper\build-release\CMakeFiles\generate.stamp</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</LinkObjects>
+      <Message Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Building Custom Rule C:/Users/cisco/Desktop/dev/research/Vesper/CMakeLists.txt</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SC:/Users/cisco/Desktop/dev/research/Vesper -BC:/Users/cisco/Desktop/dev/research/Vesper/build-release --check-stamp-file C:/Users/cisco/Desktop/dev/research/Vesper/build-release/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:\Program Files\CMake\share\cmake-4.1\Modules\CMakeCInformation.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CMakeCXXInformation.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CMakeCommonLanguageInclude.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CMakeGenericSystem.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CMakeInitializeConfigs.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CMakeLanguageInformation.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CMakeParseImplicitLinkInfo.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CMakeRCInformation.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CMakeSystemSpecificInformation.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CMakeSystemSpecificInitialize.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CTest.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CTestTargets.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CTestUseLaunchers.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CheckCSourceCompiles.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CheckIncludeFile.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CheckLibraryExists.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Compiler\CMakeCommonCompilerMacros.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Compiler\MSVC-C.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Compiler\MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Compiler\MSVC.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\DartConfiguration.tcl.in;C:\Program Files\CMake\share\cmake-4.1\Modules\ExternalProject\shared_internal_commands.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\FetchContent.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\FetchContent\CMakeLists.cmake.in;C:\Program Files\CMake\share\cmake-4.1\Modules\FindGit.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\FindOpenMP.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\FindPackageHandleStandardArgs.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\FindPackageMessage.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\FindPython\Support.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\FindPython3.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\FindThreads.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\GoogleTest.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Internal\CMakeCLinkerInformation.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Internal\CMakeCXXLinkerInformation.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Internal\CMakeCommonLinkerInformation.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Internal\CheckSourceCompiles.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Linker\MSVC-C.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Linker\MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Linker\MSVC.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Platform\Linker\Windows-MSVC-C.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Platform\Linker\Windows-MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Platform\Linker\Windows-MSVC.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Platform\Windows-Initialize.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Platform\Windows-MSVC-C.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Platform\Windows-MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Platform\Windows-MSVC.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Platform\Windows.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Platform\WindowsPaths.cmake;C:\Program Files\CMake\share\cmake-4.1\Templates\CTestScript.cmake.in;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\CMakeFiles\4.1.1\CMakeCCompiler.cmake;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\CMakeFiles\4.1.1\CMakeCXXCompiler.cmake;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\CMakeFiles\4.1.1\CMakeRCCompiler.cmake;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\CMakeFiles\4.1.1\CMakeSystem.cmake;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-src\extras\Catch.cmake;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:\Users\cisco\Desktop\dev\research\Vesper\build-release\CMakeFiles\generate.stamp</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</LinkObjects>
+      <Message Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">Building Custom Rule C:/Users/cisco/Desktop/dev/research/Vesper/CMakeLists.txt</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SC:/Users/cisco/Desktop/dev/research/Vesper -BC:/Users/cisco/Desktop/dev/research/Vesper/build-release --check-stamp-file C:/Users/cisco/Desktop/dev/research/Vesper/build-release/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:\Program Files\CMake\share\cmake-4.1\Modules\CMakeCInformation.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CMakeCXXInformation.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CMakeCommonLanguageInclude.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CMakeGenericSystem.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CMakeInitializeConfigs.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CMakeLanguageInformation.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CMakeParseImplicitLinkInfo.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CMakeRCInformation.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CMakeSystemSpecificInformation.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CMakeSystemSpecificInitialize.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CTest.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CTestTargets.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CTestUseLaunchers.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CheckCSourceCompiles.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CheckIncludeFile.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CheckLibraryExists.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Compiler\CMakeCommonCompilerMacros.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Compiler\MSVC-C.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Compiler\MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Compiler\MSVC.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\DartConfiguration.tcl.in;C:\Program Files\CMake\share\cmake-4.1\Modules\ExternalProject\shared_internal_commands.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\FetchContent.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\FetchContent\CMakeLists.cmake.in;C:\Program Files\CMake\share\cmake-4.1\Modules\FindGit.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\FindOpenMP.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\FindPackageHandleStandardArgs.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\FindPackageMessage.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\FindPython\Support.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\FindPython3.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\FindThreads.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\GoogleTest.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Internal\CMakeCLinkerInformation.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Internal\CMakeCXXLinkerInformation.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Internal\CMakeCommonLinkerInformation.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Internal\CheckSourceCompiles.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Linker\MSVC-C.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Linker\MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Linker\MSVC.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Platform\Linker\Windows-MSVC-C.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Platform\Linker\Windows-MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Platform\Linker\Windows-MSVC.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Platform\Windows-Initialize.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Platform\Windows-MSVC-C.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Platform\Windows-MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Platform\Windows-MSVC.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Platform\Windows.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Platform\WindowsPaths.cmake;C:\Program Files\CMake\share\cmake-4.1\Templates\CTestScript.cmake.in;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\CMakeFiles\4.1.1\CMakeCCompiler.cmake;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\CMakeFiles\4.1.1\CMakeCXXCompiler.cmake;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\CMakeFiles\4.1.1\CMakeRCCompiler.cmake;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\CMakeFiles\4.1.1\CMakeSystem.cmake;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-src\extras\Catch.cmake;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:\Users\cisco\Desktop\dev\research\Vesper\build-release\CMakeFiles\generate.stamp</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">false</LinkObjects>
+      <Message Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">Building Custom Rule C:/Users/cisco/Desktop/dev/research/Vesper/CMakeLists.txt</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SC:/Users/cisco/Desktop/dev/research/Vesper -BC:/Users/cisco/Desktop/dev/research/Vesper/build-release --check-stamp-file C:/Users/cisco/Desktop/dev/research/Vesper/build-release/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:\Program Files\CMake\share\cmake-4.1\Modules\CMakeCInformation.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CMakeCXXInformation.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CMakeCommonLanguageInclude.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CMakeGenericSystem.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CMakeInitializeConfigs.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CMakeLanguageInformation.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CMakeParseImplicitLinkInfo.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CMakeRCInformation.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CMakeSystemSpecificInformation.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CMakeSystemSpecificInitialize.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CTest.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CTestTargets.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CTestUseLaunchers.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CheckCSourceCompiles.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CheckIncludeFile.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\CheckLibraryExists.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Compiler\CMakeCommonCompilerMacros.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Compiler\MSVC-C.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Compiler\MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Compiler\MSVC.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\DartConfiguration.tcl.in;C:\Program Files\CMake\share\cmake-4.1\Modules\ExternalProject\shared_internal_commands.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\FetchContent.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\FetchContent\CMakeLists.cmake.in;C:\Program Files\CMake\share\cmake-4.1\Modules\FindGit.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\FindOpenMP.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\FindPackageHandleStandardArgs.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\FindPackageMessage.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\FindPython\Support.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\FindPython3.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\FindThreads.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\GoogleTest.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Internal\CMakeCLinkerInformation.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Internal\CMakeCXXLinkerInformation.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Internal\CMakeCommonLinkerInformation.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Internal\CheckSourceCompiles.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Linker\MSVC-C.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Linker\MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Linker\MSVC.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Platform\Linker\Windows-MSVC-C.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Platform\Linker\Windows-MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Platform\Linker\Windows-MSVC.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Platform\Windows-Initialize.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Platform\Windows-MSVC-C.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Platform\Windows-MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Platform\Windows-MSVC.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Platform\Windows.cmake;C:\Program Files\CMake\share\cmake-4.1\Modules\Platform\WindowsPaths.cmake;C:\Program Files\CMake\share\cmake-4.1\Templates\CTestScript.cmake.in;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\CMakeFiles\4.1.1\CMakeCCompiler.cmake;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\CMakeFiles\4.1.1\CMakeCXXCompiler.cmake;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\CMakeFiles\4.1.1\CMakeRCCompiler.cmake;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\CMakeFiles\4.1.1\CMakeSystem.cmake;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-src\extras\Catch.cmake;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:\Users\cisco\Desktop\dev\research\Vesper\build-release\CMakeFiles\generate.stamp</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">false</LinkObjects>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+  </ItemGroup>
+  <ItemGroup />
+  <ItemGroup>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\ZERO_CHECK.vcxproj">
+      <Project>{70875723-14F9-347D-B36E-C293D3A8B751}</Project>
+      <Name>ZERO_CHECK</Name>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-build\src\Catch2.vcxproj">
+      <Project>{8d538cbe-01bf-4a2e-a98a-6c368fdf13d7}</Project>
+      <Name>Catch2</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-build\src\Catch2WithMain.vcxproj">
+      <Project>{8bd3552a-2cfb-4a59-ab15-2031b97ada1e}</Project>
+      <Name>Catch2WithMain</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\gbench-build\src\benchmark.vcxproj">
+      <Project>{B3BF85A0-3555-38B8-A4FE-3CB0F30CF18B}</Project>
+      <Name>benchmark</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\gbench-build\src\benchmark_main.vcxproj">
+      <Project>{C1402A9B-BD83-3CCC-828A-262FD38423D3}</Project>
+      <Name>benchmark_main</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\connectivity_smoke.vcxproj">
+      <Project>{BDF2982C-DB08-31E1-932B-894CC9F8A4CF}</Project>
+      <Name>connectivity_smoke</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\googletest-build\googlemock\gmock.vcxproj">
+      <Project>{C8A5783B-2A89-307A-98C3-9DE9B8315962}</Project>
+      <Name>gmock</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\googletest-build\googlemock\gmock_main.vcxproj">
+      <Project>{3CDFEB9C-D62F-3151-A250-7FFE5900B0C2}</Project>
+      <Name>gmock_main</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\googletest-build\googletest\gtest.vcxproj">
+      <Project>{76586611-E640-341A-B9EB-41D30E411C12}</Project>
+      <Name>gtest</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\googletest-build\googletest\gtest_main.vcxproj">
+      <Project>{FF6B440F-AB08-345A-B28C-EE51EE7334D0}</Project>
+      <Name>gtest_main</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\hnsw_connectivity_test.vcxproj">
+      <Project>{31CE80F8-31F3-3DF7-917C-DCDA037EA5BE}</Project>
+      <Name>hnsw_connectivity_test</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\hnsw_index_test.vcxproj">
+      <Project>{AE835D58-1866-3CF7-AF4F-AD66E9AC67E8}</Project>
+      <Name>hnsw_index_test</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\hnsw_thread_pool_stress_test.vcxproj">
+      <Project>{8A3FE104-70D6-3021-8E1A-C3BCF2A56EC1}</Project>
+      <Name>hnsw_thread_pool_stress_test</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\integration_test.vcxproj">
+      <Project>{7154859F-460C-39B3-BCBF-477CA87330C9}</Project>
+      <Name>integration_test</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\kmeans_test.vcxproj">
+      <Project>{5FEAE2D7-42DA-3056-8963-4CC6F7549C9A}</Project>
+      <Name>kmeans_test</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\multi_index_test.vcxproj">
+      <Project>{73ABD488-1EE7-31AE-8C74-DD8B3A9ED432}</Project>
+      <Name>multi_index_test</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-build\src\roaring.vcxproj">
+      <Project>{4A20D676-2578-3E94-BC40-5C19EBACFCE1}</Project>
+      <Name>roaring</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\simd_kernels_test.vcxproj">
+      <Project>{43961550-0992-3426-96DE-266975D77153}</Project>
+      <Name>simd_kernels_test</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\stress_test.vcxproj">
+      <Project>{8A61E356-80F6-30A0-8476-718A91CB793C}</Project>
+      <Name>stress_test</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\test_hnsw_batch.vcxproj">
+      <Project>{7E8E557F-C0AB-3A3E-80AF-F7B8F8725776}</Project>
+      <Name>test_hnsw_batch</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\test_index_manager.vcxproj">
+      <Project>{799599A3-2374-32F5-ADBA-BE2CAB2EE63F}</Project>
+      <Name>test_index_manager</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\vesper_bench_dummy.vcxproj">
+      <Project>{8C20A2C7-7FAF-357C-81C4-FE02F30C65C4}</Project>
+      <Name>vesper_bench_dummy</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\vesper_bench_fused_vs_materialized.vcxproj">
+      <Project>{E8390C6F-4653-33E1-8B38-94E013C36973}</Project>
+      <Name>vesper_bench_fused_vs_materialized</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\vesper_bench_index.vcxproj">
+      <Project>{B54EA117-0805-3ECB-8F52-AB283B1DC65E}</Project>
+      <Name>vesper_bench_index</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\vesper_bench_simd.vcxproj">
+      <Project>{F64FAE1B-742F-37FF-8F96-142EF5BFD4E0}</Project>
+      <Name>vesper_bench_simd</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\vesper_core.vcxproj">
+      <Project>{EA378651-CB3E-3044-96DF-4F78689FA8E4}</Project>
+      <Name>vesper_core</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\vesper_headers_check.vcxproj">
+      <Project>{2319E844-2B68-3FFF-BD24-EA30BC230DD7}</Project>
+      <Name>vesper_headers_check</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\vesper_tests.vcxproj">
+      <Project>{BECF3940-3761-36F8-9D93-832CA8770566}</Project>
+      <Name>vesper_tests</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\vesper_wal.vcxproj">
+      <Project>{EDAB600A-9E71-3D0B-B395-157AA52764D3}</Project>
+      <Name>vesper_wal</Name>
+    </ProjectReference>
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>

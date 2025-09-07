@@ -4,6 +4,7 @@
 
 #include "vesper/index/disk_graph.hpp"
 #include "vesper/index/product_quantizer.hpp"
+#include "vesper/cache/lru_cache.hpp"
 #include <expected>  // For std::expected and std::vesper_unexpected
 
 // Windows fix for std::max
@@ -86,11 +87,19 @@ inline float compute_l2_distance_global(const float* a, const float* b, std::siz
 /** \brief Implementation class for DiskGraphIndex. */
 class DiskGraphIndex::Impl {
 public:
-    explicit Impl(std::size_t dim) 
+    explicit Impl(std::size_t dim, std::size_t cache_size_mb = 1024) 
         : dimension_(dim)
         , pq_(nullptr)
         , num_nodes_(0)
-        , cache_size_(0) {
+        , cache_size_mb_(cache_size_mb) {
+        
+        const std::size_t cache_bytes = cache_size_mb * 1024 * 1024;
+        neighbor_cache_ = std::make_unique<cache::GraphNodeCache>(
+            cache_bytes, 16, std::nullopt, nullptr
+        );
+        vector_cache_ = std::make_unique<cache::VectorCache>(
+            cache_bytes, 16, std::nullopt, nullptr
+        );
     }
 
     ~Impl() {
@@ -349,8 +358,8 @@ public:
         IOStats stats;
         stats.reads = io_stats_.reads.load();
         stats.read_bytes = io_stats_.read_bytes.load();
-        stats.cache_hits = io_stats_.cache_hits.load();
-        stats.cache_misses = io_stats_.cache_misses.load();
+        stats.cache_hits = 0; // io_stats_.cache_hits.load();
+        stats.cache_misses = 0; // io_stats_.cache_misses.load();
         stats.prefetch_hits = io_stats_.prefetch_hits.load();
         return stats;
     }
@@ -499,8 +508,9 @@ private:
                 break; // All remaining candidates are worse
             }
             
-            // Check neighbors
-            for (std::uint32_t neighbor : graph_[current_id]) {
+            // Check neighbors (cache temporarily disabled)
+            const auto& neighbors = graph_[current_id]; // get_neighbors_cached(current_id);
+            for (std::uint32_t neighbor : neighbors) {
                 if (visited.find(neighbor) == visited.end()) {
                     visited.insert(neighbor);
                     
@@ -597,6 +607,27 @@ private:
     void close_files() {
         // Close any open file handles
     }
+    
+    // Get neighbors (cache temporarily disabled)
+    /*
+    auto get_neighbors_cached(std::uint32_t node_id) const 
+        -> const std::vector<std::uint32_t>& {
+        // Cache disabled for compilation
+        return graph_[node_id];
+    }
+    */
+    
+    // Get vector (cache temporarily disabled)
+    /*
+    auto get_vector_cached(std::uint32_t node_id, const float* vectors) const
+        -> std::vector<float> {
+        // Cache disabled for compilation
+        std::vector<float> vec(dimension_);
+        std::memcpy(vec.data(), vectors + node_id * dimension_, 
+                   dimension_ * sizeof(float));
+        return vec;
+    }
+    */
 
 private:
     std::size_t dimension_;
@@ -615,10 +646,10 @@ private:
     std::unique_ptr<ProductQuantizer> pq_;
     std::vector<std::uint8_t> pq_codes_;
     
-    // Cache
-    mutable std::unordered_map<std::uint32_t, CacheEntry> cache_;
-    mutable std::mutex cache_mutex_;
-    std::size_t cache_size_;
+    // LRU Cache for graph nodes and vectors
+    mutable std::unique_ptr<cache::GraphNodeCache> neighbor_cache_;
+    mutable std::unique_ptr<cache::VectorCache> vector_cache_;
+    std::size_t cache_size_mb_;
 };
 
 // Public interface implementation

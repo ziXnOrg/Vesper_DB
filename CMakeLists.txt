@@ -94,7 +94,10 @@ set(VESPER_CORE_SOURCES
     src/index/disk_graph.cpp
     src/index/product_quantizer.cpp
     src/index/index_manager.cpp
-    src/index/query_planner.cpp)
+    src/index/query_planner.cpp
+    # src/io/async_io.cpp  # Temporarily disabled
+    src/io/prefetch_manager.cpp
+    )
 
 # Add platform-specific sources
 # Windows reports AMD64, Linux/macOS report x86_64
@@ -107,8 +110,16 @@ else()
     list(APPEND VESPER_CORE_SOURCES src/index/pq_simple.cpp)
 endif()
 
+# Add platform-specific I/O implementations
+if(WIN32)
+    # list(APPEND VESPER_CORE_SOURCES src/io/async_io_windows.cpp)  # Temporarily disabled
+endif()
+
 add_library(vesper_core STATIC ${VESPER_CORE_SOURCES})
 target_link_libraries(vesper_core PRIVATE vesper_headers)
+if(TARGET roaring)
+  target_link_libraries(vesper_core PUBLIC roaring)
+endif()
 
 # Enable AVX2 for vesper_core on x86-64
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|amd64|x64")
@@ -184,6 +195,16 @@ if (VESPER_ENABLE_TESTS)
     GIT_TAG        ${CATCH2_TAG}
   )
   FetchContent_MakeAvailable(catch2)
+  
+  # CRoaring bitmap library
+  set(ENABLE_ROARING_TESTS OFF CACHE BOOL "" FORCE)  # Disable CRoaring tests before fetch
+  FetchContent_Declare(
+    croaring
+    GIT_REPOSITORY https://github.com/RoaringBitmap/CRoaring.git
+    GIT_TAG        v2.0.4
+    CMAKE_ARGS -DENABLE_ROARING_TESTS=OFF
+  )
+  FetchContent_MakeAvailable(croaring)
 
 
   file(GLOB TEST_SOURCES
@@ -207,6 +228,8 @@ if (VESPER_ENABLE_TESTS)
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/actual_index_performance_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/performance_validation_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/test_hnsw_simple.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/index_manager_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/query_planner_test.cpp
   )
 
 
@@ -352,6 +375,14 @@ endif()
 
   target_link_libraries(integration_test PRIVATE vesper_headers vesper_core Threads::Threads)
 
+  # Multi-index integration test
+  add_executable(multi_index_test tests/integration/multi_index_test.cpp)
+  target_link_libraries(multi_index_test PRIVATE Catch2::Catch2WithMain vesper_headers vesper_core Threads::Threads)
+  
+  # Simple IndexManager test
+  add_executable(test_index_manager test_index_manager.cpp)
+  target_link_libraries(test_index_manager PRIVATE vesper_headers vesper_core Threads::Threads)
+
   # Add tests to CTest
   include(GoogleTest)
   gtest_discover_tests(simd_kernels_test)
@@ -360,6 +391,9 @@ endif()
   # gtest_discover_tests(hnsw_lockfree_test)
   gtest_discover_tests(stress_test)
   add_test(NAME integration_test COMMAND integration_test)
+  
+  # Catch2 test discovery for multi-index test
+  catch_discover_tests(multi_index_test)
   gtest_discover_tests(hnsw_thread_pool_stress_test)
 
 endif()
