@@ -3,6 +3,7 @@
  */
 
 #include "vesper/index/disk_graph.hpp"
+#include "vesper/index/product_quantizer.hpp"
 #include <expected>  // For std::expected and std::vesper_unexpected
 
 // Windows fix for std::max
@@ -87,6 +88,7 @@ class DiskGraphIndex::Impl {
 public:
     explicit Impl(std::size_t dim) 
         : dimension_(dim)
+        , pq_(nullptr)
         , num_nodes_(0)
         , cache_size_(0) {
     }
@@ -355,10 +357,28 @@ public:
 
 private:
     void init_product_quantizer(const float* vectors, std::size_t n) {
-        // TODO: Implement PQ initialization
-        // For now, skip PQ compression
-        (void)vectors;
-        (void)n;
+        // Initialize PQ with training vectors
+        PqTrainParams pq_params;
+        pq_params.m = build_params_.pq_m;
+        pq_params.nbits = build_params_.pq_bits;
+        
+        pq_ = std::make_unique<ProductQuantizer>();
+        
+        // Train PQ on a subset of vectors
+        std::size_t train_size = (std::min)(n, static_cast<std::size_t>(100000));
+        auto result = pq_->train(vectors, train_size, dimension_, pq_params);
+        if (!result) {
+            // Handle error - for now just skip PQ
+            pq_.reset();
+            return;
+        }
+        
+        // Encode all vectors
+        pq_codes_.resize(n * pq_->code_size());
+        for (std::size_t i = 0; i < n; ++i) {
+            pq_->encode_one(vectors + i * dimension_, 
+                           pq_codes_.data() + i * pq_->code_size());
+        }
     }
 
     void build_initial_graph(const float* vectors, std::size_t n) {
@@ -591,8 +611,8 @@ private:
     // Entry points for search
     std::vector<std::uint32_t> entry_points_;
     
-    // Product quantizer (TODO: implement when ProductQuantizer is available)
-    // std::unique_ptr<ProductQuantizer> pq_;
+    // Product quantizer
+    std::unique_ptr<ProductQuantizer> pq_;
     std::vector<std::uint8_t> pq_codes_;
     
     // Cache

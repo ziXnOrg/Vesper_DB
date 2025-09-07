@@ -51,7 +51,7 @@ struct OpqParams {
  */
 class ProductQuantizer {
 public:
-    ProductQuantizer() = default;
+    ProductQuantizer();
     ~ProductQuantizer();
     ProductQuantizer(ProductQuantizer&&) noexcept;
     ProductQuantizer& operator=(ProductQuantizer&&) noexcept;
