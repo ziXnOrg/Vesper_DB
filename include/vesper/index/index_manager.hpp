@@ -24,6 +24,7 @@
 #include "vesper/index/hnsw.hpp"
 #include "vesper/index/ivf_pq.hpp"
 #include "vesper/index/disk_graph.hpp"
+#include "vesper/index/product_quantizer.hpp"
 
 namespace vesper::index {
 
@@ -50,7 +51,7 @@ struct IndexBuildConfig {
     HnswBuildParams hnsw_params;
     
     // IVF-PQ parameters
-    IvfBuildParams ivf_params;
+    IvfPqTrainParams ivf_params;
     PqTrainParams pq_params;
     
     // DiskANN parameters
@@ -89,7 +90,7 @@ struct IndexStats {
     float build_time_seconds{0.0f};
     float avg_query_time_ms{0.0f};
     float measured_recall{0.0f};
-    std::atomic<std::uint64_t> query_count{0};
+    std::uint64_t query_count{0};  // Not atomic for copyability
 };
 
 /** \brief Unified index manager for multiple index types.
@@ -254,6 +255,8 @@ public:
     
     /** \brief Create planner for index manager. */
     explicit QueryPlanner(const IndexManager& manager);
+    
+    ~QueryPlanner();
     
     /** \brief Plan query execution.
      *
