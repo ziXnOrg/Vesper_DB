@@ -608,4 +608,111 @@ auto compute_recall(const IvfPqIndex& index,
     return static_cast<float>(total_found) / (n_queries * k);
 }
 
+auto IvfPqIndex::reconstruct_cluster(std::uint32_t cluster_id,
+                                    std::vector<std::uint64_t>& ids,
+                                    std::vector<float>& vectors) const
+    -> std::expected<void, core::error> {
+    
+    using core::error;
+    using core::error_code;
+    
+    if (!impl_->state_.trained) {
+        return std::unexpected(error{
+            error_code::precondition_failed,
+            "Index not trained",
+            "ivf_pq"
+        });
+    }
+    
+    if (cluster_id >= impl_->state_.params.nlist) {
+        return std::unexpected(error{
+            error_code::invalid_argument,
+            "Invalid cluster ID",
+            "ivf_pq"
+        });
+    }
+    
+    // Clear output vectors
+    ids.clear();
+    vectors.clear();
+    
+    // Get inverted list for this cluster
+    const auto& inverted_list = impl_->inverted_lists_[cluster_id];
+    if (inverted_list.empty()) {
+        return {};  // Empty cluster
+    }
+    
+    // Reserve space
+    ids.reserve(inverted_list.size());
+    vectors.reserve(inverted_list.size() * impl_->state_.dim);
+    
+    // Get coarse centroid for this cluster
+    const float* centroid = impl_->state_.coarse_centroids.get() + 
+                           cluster_id * impl_->state_.dim;
+    
+    // Reconstruct each vector in the cluster
+    for (const auto& entry : inverted_list) {
+        ids.push_back(entry.id);
+        
+        // Decode PQ code to residual
+        std::vector<float> residual(impl_->state_.dim);
+        impl_->state_.pq->decode(entry.code, residual.data());
+        
+        // Add centroid to get full vector
+        for (std::size_t d = 0; d < impl_->state_.dim; ++d) {
+            vectors.push_back(centroid[d] + residual[d]);
+        }
+    }
+    
+    return {};
+}
+
+auto IvfPqIndex::reconstruct(std::uint64_t id) const
+    -> std::expected<std::vector<float>, core::error> {
+    
+    using core::error;
+    using core::error_code;
+    
+    if (!impl_->state_.trained) {
+        return std::unexpected(error{
+            error_code::precondition_failed,
+            "Index not trained",
+            "ivf_pq"
+        });
+    }
+    
+    // Search all inverted lists for the ID
+    for (std::uint32_t cluster_id = 0; cluster_id < impl_->state_.params.nlist; ++cluster_id) {
+        const auto& inverted_list = impl_->inverted_lists_[cluster_id];
+        
+        for (const auto& entry : inverted_list) {
+            if (entry.id == id) {
+                // Found the vector, reconstruct it
+                std::vector<float> reconstructed(impl_->state_.dim);
+                
+                // Get coarse centroid
+                const float* centroid = impl_->state_.coarse_centroids.get() + 
+                                       cluster_id * impl_->state_.dim;
+                
+                // Decode PQ code to residual
+                std::vector<float> residual(impl_->state_.dim);
+                impl_->state_.pq->decode(entry.code, residual.data());
+                
+                // Add centroid to get full vector
+                for (std::size_t d = 0; d < impl_->state_.dim; ++d) {
+                    reconstructed[d] = centroid[d] + residual[d];
+                }
+                
+                return reconstructed;
+            }
+        }
+    }
+    
+    return std::unexpected(error{
+        error_code::not_found,
+        "Vector ID not found",
+        "ivf_pq"
+    });
+}
+
 } // namespace vesper::index

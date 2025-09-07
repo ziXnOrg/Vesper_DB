@@ -146,6 +146,77 @@ public:
 
     /** \brief Check if index is initialized. */
     auto is_initialized() const noexcept -> bool;
+    
+    /** \brief Get total number of nodes in index. */
+    auto size() const noexcept -> std::size_t;
+    
+    /** \brief Get maximum layer in hierarchy. */
+    auto get_max_layer() const noexcept -> int;
+    
+    /** \brief Get neighbors of a node at specific layer.
+     *
+     * \param node_id Node identifier
+     * \param layer Layer level (0 = base layer)
+     * \return Vector of neighbor IDs
+     */
+    auto get_neighbors(std::uint64_t node_id, int layer) const 
+        -> std::vector<std::uint64_t>;
+    
+    /** \brief Get all nodes that point to a specific node.
+     *
+     * \param node_id Target node identifier
+     * \param layer Layer level
+     * \return Vector of nodes with edges to target
+     */
+    auto get_reverse_neighbors(std::uint64_t node_id, int layer) const
+        -> std::vector<std::uint64_t>;
+    
+    /** \brief Remove an edge between two nodes.
+     *
+     * \param from Source node ID
+     * \param to Target node ID
+     * \param layer Layer level
+     * \return Success or error
+     */
+    auto remove_edge(std::uint64_t from, std::uint64_t to, int layer)
+        -> std::expected<void, core::error>;
+    
+    /** \brief Get vector data for a specific node.
+     *
+     * \param node_id Node identifier
+     * \return Vector data or error
+     */
+    auto get_vector(std::uint64_t node_id) const
+        -> std::expected<std::vector<float>, core::error>;
+    
+    /** \brief Extract all vectors from the index.
+     *
+     * \param[out] ids Output vector IDs
+     * \param[out] vectors Output vector data (flattened)
+     * \return Success or error
+     */
+    auto extract_all_vectors(std::vector<std::uint64_t>& ids,
+                            std::vector<float>& vectors) const
+        -> std::expected<void, core::error>;
+    
+    /** \brief Update graph connections for a node.
+     *
+     * \param node_id Node to update
+     * \param layer Layer level
+     * \param new_neighbors New neighbor list
+     * \return Success or error
+     */
+    auto update_connections(std::uint64_t node_id, int layer,
+                           const std::vector<std::uint64_t>& new_neighbors)
+        -> std::expected<void, core::error>;
+    
+    /** \brief Get or set entry point for searches.
+     *
+     * \param new_entry_point Optional new entry point to set
+     * \return Current entry point ID
+     */
+    auto entry_point(std::optional<std::uint64_t> new_entry_point = {})
+        -> std::uint64_t;
 
     /** \brief Get vector dimensionality. */
     auto dimension() const noexcept -> std::size_t;

@@ -59,6 +59,7 @@ struct VamanaBuildParams {
 /** \brief Search parameters for Vamana graph. */
 struct VamanaSearchParams {
     std::uint32_t beam_width{64};        /**< Beam size W for search (32-256) */
+    std::uint32_t L{128};                /**< Search list size (usually 1.5-2x beam_width) */
     std::uint32_t k{10};                 /**< Number of neighbors to return */
     std::uint32_t cache_nodes{10000};    /**< Max nodes to keep in RAM cache */
     bool use_pq_distance{true};          /**< Use PQ for distance estimation */

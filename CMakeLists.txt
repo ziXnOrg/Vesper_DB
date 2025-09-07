@@ -80,6 +80,17 @@ else()
   add_compile_definitions(VESPER_ENABLE_KERNEL_DISPATCH=0)
 endif()
 
+# Fetch CRoaring bitmap library early (needed by tombstone module)
+include(FetchContent)
+set(ENABLE_ROARING_TESTS OFF CACHE BOOL "" FORCE)  # Disable CRoaring tests
+FetchContent_Declare(
+  croaring
+  GIT_REPOSITORY https://github.com/RoaringBitmap/CRoaring.git
+  GIT_TAG        v2.0.4
+  CMAKE_ARGS -DENABLE_ROARING_TESTS=OFF
+)
+FetchContent_MakeAvailable(croaring)
+
 # Library (minimal in-memory impl) to prove linkage in CI
 set(VESPER_CORE_SOURCES
     src/inmemory_collection.cpp
@@ -95,8 +106,11 @@ set(VESPER_CORE_SOURCES
     src/index/product_quantizer.cpp
     src/index/index_manager.cpp
     src/index/query_planner.cpp
-    # src/io/async_io.cpp  # Temporarily disabled
+    src/io/async_io.cpp
     src/io/prefetch_manager.cpp
+    src/tombstone/tombstone_manager.cpp
+    src/metadata/metadata_store.cpp
+    src/memory/numa_allocator.cpp
     )
 
 # Add platform-specific sources
@@ -111,8 +125,9 @@ else()
 endif()
 
 # Add platform-specific I/O implementations
-if(WIN32)
-    # list(APPEND VESPER_CORE_SOURCES src/io/async_io_windows.cpp)  # Temporarily disabled
+if(UNIX AND NOT APPLE)
+    # Linux-specific sources
+    list(APPEND VESPER_CORE_SOURCES src/io/io_uring.cpp)
 endif()
 
 add_library(vesper_core STATIC ${VESPER_CORE_SOURCES})
@@ -159,6 +174,27 @@ else()
 
 endif()
 
+# Link platform-specific libraries
+if(UNIX AND NOT APPLE)
+  # Linux-specific libraries
+  find_library(URING_LIB uring)
+  if(URING_LIB)
+    target_link_libraries(vesper_core PUBLIC ${URING_LIB})
+    message(STATUS "liburing found: ${URING_LIB}")
+  else()
+    message(STATUS "liburing not found - io_uring support disabled")
+  endif()
+  
+  # NUMA libraries
+  find_library(NUMA_LIB numa)
+  if(NUMA_LIB)
+    target_link_libraries(vesper_core PUBLIC ${NUMA_LIB})
+    message(STATUS "libnuma found: ${NUMA_LIB}")
+  else()
+    message(STATUS "libnuma not found - NUMA support limited")
+  endif()
+endif()
+
 
 # WAL library
 add_library(vesper_wal STATIC src/wal/frame.cpp src/wal/io.cpp src/wal/manifest.cpp src/wal/snapshot.cpp src/wal/retention.cpp src/wal/replay.cpp src/wal/checkpoint.cpp)
@@ -195,17 +231,6 @@ if (VESPER_ENABLE_TESTS)
     GIT_TAG        ${CATCH2_TAG}
   )
   FetchContent_MakeAvailable(catch2)
-  
-  # CRoaring bitmap library
-  set(ENABLE_ROARING_TESTS OFF CACHE BOOL "" FORCE)  # Disable CRoaring tests before fetch
-  FetchContent_Declare(
-    croaring
-    GIT_REPOSITORY https://github.com/RoaringBitmap/CRoaring.git
-    GIT_TAG        v2.0.4
-    CMAKE_ARGS -DENABLE_ROARING_TESTS=OFF
-  )
-  FetchContent_MakeAvailable(croaring)
-
 
   file(GLOB TEST_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/*.cpp
@@ -230,7 +255,13 @@ if (VESPER_ENABLE_TESTS)
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/test_hnsw_simple.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/index_manager_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/query_planner_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/test_numa_allocator.cpp
   )
+  
+  # Add Linux-specific tests
+  if(UNIX AND NOT APPLE)
+    list(APPEND TEST_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/test_io_uring.cpp)
+  endif()
 
 
   add_executable(vesper_tests ${TEST_SOURCES})
@@ -307,6 +338,12 @@ endif()
 
   add_executable(vesper_bench_fused_vs_materialized bench/micro/fused_vs_materialized_bench.cpp)
   target_link_libraries(vesper_bench_fused_vs_materialized PRIVATE benchmark::benchmark vesper_headers vesper_core)
+
+  add_executable(bench_simd_kernels bench/micro/bench_simd_kernels.cpp)
+  target_link_libraries(bench_simd_kernels PRIVATE benchmark::benchmark vesper_headers vesper_core)
+
+  add_executable(bench_numa_allocator bench/micro/bench_numa_allocator.cpp)
+  target_link_libraries(bench_numa_allocator PRIVATE benchmark::benchmark vesper_headers vesper_core)
 
 endif()
 

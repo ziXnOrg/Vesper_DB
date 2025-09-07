@@ -230,20 +230,140 @@ auto hierarchical_kmeans(const float* data, std::size_t n, std::size_t dim,
     return kmeans_cluster(data, n, dim, params);
 }
 
-auto evaluate_clustering(const float* /* data */, std::size_t /* n */, std::size_t /* dim */,
-                         const KmeansResult& /* result */) -> ClusterMetrics {
+auto evaluate_clustering(const float* data, std::size_t n, std::size_t dim,
+                         const KmeansResult& result) -> ClusterMetrics {
     ClusterMetrics metrics;
     
-    // Simplified metrics computation
-    // Full implementation would compute:
-    // - Silhouette coefficient
-    // - Davies-Bouldin index
-    // - Calinski-Harabasz index
+    if (n == 0 || result.centroids.empty() || result.labels.empty()) {
+        return metrics;
+    }
     
-    // For now, return placeholder values
-    metrics.silhouette = 0.5f;
-    metrics.davies_bouldin = 1.0f;
-    metrics.calinski_harabasz = 100.0f;
+    const std::size_t k = result.centroids.size() / dim;
+    
+    // Compute cluster sizes and within-cluster sum of squares
+    std::vector<std::size_t> cluster_sizes(k, 0);
+    std::vector<float> within_ss(k, 0.0f);
+    
+    for (std::size_t i = 0; i < n; ++i) {
+        std::uint32_t label = result.labels[i];
+        if (label >= k) continue;
+        
+        cluster_sizes[label]++;
+        
+        // Compute squared distance to centroid
+        float dist_sq = 0.0f;
+        for (std::size_t d = 0; d < dim; ++d) {
+            float diff = data[i * dim + d] - result.centroids[label * dim + d];
+            dist_sq += diff * diff;
+        }
+        within_ss[label] += dist_sq;
+    }
+    
+    // Compute global centroid
+    std::vector<float> global_centroid(dim, 0.0f);
+    for (std::size_t i = 0; i < n; ++i) {
+        for (std::size_t d = 0; d < dim; ++d) {
+            global_centroid[d] += data[i * dim + d];
+        }
+    }
+    for (std::size_t d = 0; d < dim; ++d) {
+        global_centroid[d] /= static_cast<float>(n);
+    }
+    
+    // Compute between-cluster sum of squares
+    float between_ss = 0.0f;
+    for (std::size_t c = 0; c < k; ++c) {
+        if (cluster_sizes[c] == 0) continue;
+        
+        float dist_sq = 0.0f;
+        for (std::size_t d = 0; d < dim; ++d) {
+            float diff = result.centroids[c * dim + d] - global_centroid[d];
+            dist_sq += diff * diff;
+        }
+        between_ss += static_cast<float>(cluster_sizes[c]) * dist_sq;
+    }
+    
+    // Compute total within-cluster sum of squares
+    float total_within_ss = 0.0f;
+    for (std::size_t c = 0; c < k; ++c) {
+        total_within_ss += within_ss[c];
+    }
+    
+    // Calinski-Harabasz index = (between_ss / (k-1)) / (within_ss / (n-k))
+    if (k > 1 && n > k && total_within_ss > 0) {
+        metrics.calinski_harabasz = (between_ss / (k - 1)) / (total_within_ss / (n - k));
+    }
+    
+    // Davies-Bouldin index - average similarity between each cluster and its most similar cluster
+    metrics.davies_bouldin = 0.0f;
+    for (std::size_t i = 0; i < k; ++i) {
+        if (cluster_sizes[i] == 0) continue;
+        
+        float max_similarity = 0.0f;
+        float avg_dist_i = within_ss[i] / cluster_sizes[i];
+        
+        for (std::size_t j = 0; j < k; ++j) {
+            if (i == j || cluster_sizes[j] == 0) continue;
+            
+            float avg_dist_j = within_ss[j] / cluster_sizes[j];
+            
+            // Compute distance between centroids
+            float centroid_dist = 0.0f;
+            for (std::size_t d = 0; d < dim; ++d) {
+                float diff = result.centroids[i * dim + d] - result.centroids[j * dim + d];
+                centroid_dist += diff * diff;
+            }
+            centroid_dist = std::sqrt(centroid_dist);
+            
+            if (centroid_dist > 0) {
+                float similarity = (std::sqrt(avg_dist_i) + std::sqrt(avg_dist_j)) / centroid_dist;
+                max_similarity = std::max(max_similarity, similarity);
+            }
+        }
+        
+        metrics.davies_bouldin += max_similarity;
+    }
+    
+    if (k > 0) {
+        metrics.davies_bouldin /= k;
+    }
+    
+    // Simplified silhouette coefficient (full computation is O(n²))
+    // We'll compute an approximation using cluster centroids
+    float total_silhouette = 0.0f;
+    std::size_t valid_points = 0;
+    
+    for (std::size_t i = 0; i < n; ++i) {
+        std::uint32_t label = result.labels[i];
+        if (label >= k || cluster_sizes[label] <= 1) continue;
+        
+        // a(i) = average distance to points in same cluster (approximated)
+        float a_i = std::sqrt(within_ss[label] / cluster_sizes[label]);
+        
+        // b(i) = minimum average distance to points in other clusters
+        float b_i = std::numeric_limits<float>::max();
+        for (std::size_t c = 0; c < k; ++c) {
+            if (c == label || cluster_sizes[c] == 0) continue;
+            
+            // Distance to other cluster's centroid
+            float dist = 0.0f;
+            for (std::size_t d = 0; d < dim; ++d) {
+                float diff = data[i * dim + d] - result.centroids[c * dim + d];
+                dist += diff * diff;
+            }
+            b_i = std::min(b_i, std::sqrt(dist));
+        }
+        
+        if (b_i < std::numeric_limits<float>::max()) {
+            float s_i = (b_i - a_i) / std::max(a_i, b_i);
+            total_silhouette += s_i;
+            valid_points++;
+        }
+    }
+    
+    if (valid_points > 0) {
+        metrics.silhouette = total_silhouette / valid_points;
+    }
     
     return metrics;
 }

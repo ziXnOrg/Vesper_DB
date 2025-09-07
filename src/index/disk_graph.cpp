@@ -5,6 +5,7 @@
 #include "vesper/index/disk_graph.hpp"
 #include "vesper/index/product_quantizer.hpp"
 #include "vesper/cache/lru_cache.hpp"
+#include "vesper/io/async_io.hpp"
 #include <expected>  // For std::expected and std::vesper_unexpected
 
 // Windows fix for std::max
@@ -27,10 +28,13 @@
 #include <unordered_set>
 #include <filesystem>
 #include <numeric>
-#include <unordered_set>
 
-#ifdef _WIN32
-#include <windows.h>
+// Platform-specific includes for memory-mapped files
+#ifndef _WIN32
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
 #else
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -91,7 +95,11 @@ public:
         : dimension_(dim)
         , pq_(nullptr)
         , num_nodes_(0)
-        , cache_size_mb_(cache_size_mb) {
+        , cache_size_mb_(cache_size_mb)
+        , vectors_mmap_(nullptr)
+        , graph_mmap_(nullptr)
+        , vectors_file_size_(0)
+        , graph_file_size_(0) {
         
         const std::size_t cache_bytes = cache_size_mb * 1024 * 1024;
         neighbor_cache_ = std::make_unique<cache::GraphNodeCache>(
@@ -100,10 +108,291 @@ public:
         vector_cache_ = std::make_unique<cache::VectorCache>(
             cache_bytes, 16, std::nullopt, nullptr
         );
+        
+        // Initialize async I/O
+        io::AsyncIOConfig io_config;
+        io_config.io_thread_count = 4;
+        io_config.max_queue_depth = 256;
+        io_config.use_direct_io = true;
+        
+        auto queue_result = io::AsyncIOFactory::create_queue(io_config);
+        if (queue_result.has_value()) {
+            async_io_queue_ = std::move(queue_result.value());
+            async_io_queue_->start();
+        }
     }
 
     ~Impl() {
         close_files();
+        close_mmap();
+        if (async_io_queue_) {
+            async_io_queue_->stop();
+        }
+    }
+    
+    void close_mmap() {
+        // Unmap memory-mapped files
+        if (vectors_mmap_) {
+#ifdef _WIN32
+            UnmapViewOfFile(vectors_mmap_);
+            vectors_mmap_ = nullptr;
+#else
+            munmap(vectors_mmap_, vectors_file_size_);
+            vectors_mmap_ = nullptr;
+#endif
+        }
+        
+        if (graph_mmap_) {
+#ifdef _WIN32
+            UnmapViewOfFile(graph_mmap_);
+            graph_mmap_ = nullptr;
+#else
+            munmap(graph_mmap_, graph_file_size_);
+            graph_mmap_ = nullptr;
+#endif
+        }
+        
+#ifdef _WIN32
+        if (vectors_mapping_handle_) {
+            CloseHandle(vectors_mapping_handle_);
+            vectors_mapping_handle_ = nullptr;
+        }
+        if (graph_mapping_handle_) {
+            CloseHandle(graph_mapping_handle_);
+            graph_mapping_handle_ = nullptr;
+        }
+        if (vectors_file_handle_ && vectors_file_handle_ != INVALID_HANDLE_VALUE) {
+            CloseHandle(vectors_file_handle_);
+            vectors_file_handle_ = nullptr;
+        }
+        if (graph_file_handle_ && graph_file_handle_ != INVALID_HANDLE_VALUE) {
+            CloseHandle(graph_file_handle_);
+            graph_file_handle_ = nullptr;
+        }
+#else
+        if (vectors_fd_ >= 0) {
+            close(vectors_fd_);
+            vectors_fd_ = -1;
+        }
+        if (graph_fd_ >= 0) {
+            close(graph_fd_);
+            graph_fd_ = -1;
+        }
+#endif
+    }
+    
+    auto open_mmap_write(const std::string& vectors_path, const std::string& graph_path,
+                        std::size_t vector_size, std::size_t graph_size)
+        -> std::expected<void, core::error> {
+        
+        vectors_file_size_ = vector_size;
+        graph_file_size_ = graph_size;
+        
+#ifdef _WIN32
+        // Create/open files for writing
+        vectors_file_handle_ = CreateFileA(
+            vectors_path.c_str(),
+            GENERIC_READ | GENERIC_WRITE,
+            0,
+            nullptr,
+            CREATE_ALWAYS,
+            FILE_ATTRIBUTE_NORMAL,
+            nullptr
+        );
+        
+        if (vectors_file_handle_ == INVALID_HANDLE_VALUE) {
+            return std::unexpected(core::error{
+                core::error_code::io_error,
+                "Failed to create vectors file",
+                "disk_graph"
+            });
+        }
+        
+        // Set file size
+        LARGE_INTEGER size;
+        size.QuadPart = vectors_file_size_;
+        if (!SetFilePointerEx(vectors_file_handle_, size, nullptr, FILE_BEGIN) ||
+            !SetEndOfFile(vectors_file_handle_)) {
+            close_mmap();
+            return std::unexpected(core::error{
+                core::error_code::io_error,
+                "Failed to set vectors file size",
+                "disk_graph"
+            });
+        }
+        
+        // Create file mapping
+        vectors_mapping_handle_ = CreateFileMappingA(
+            vectors_file_handle_,
+            nullptr,
+            PAGE_READWRITE,
+            static_cast<DWORD>(vectors_file_size_ >> 32),
+            static_cast<DWORD>(vectors_file_size_ & 0xFFFFFFFF),
+            nullptr
+        );
+        
+        if (!vectors_mapping_handle_) {
+            close_mmap();
+            return std::unexpected(core::error{
+                core::error_code::io_error,
+                "Failed to create vectors file mapping",
+                "disk_graph"
+            });
+        }
+        
+        // Map view of file
+        vectors_mmap_ = MapViewOfFile(
+            vectors_mapping_handle_,
+            FILE_MAP_ALL_ACCESS,
+            0, 0,
+            vectors_file_size_
+        );
+        
+        if (!vectors_mmap_) {
+            close_mmap();
+            return std::unexpected(core::error{
+                core::error_code::io_error,
+                "Failed to map vectors file",
+                "disk_graph"
+            });
+        }
+        
+        // Same for graph file
+        graph_file_handle_ = CreateFileA(
+            graph_path.c_str(),
+            GENERIC_READ | GENERIC_WRITE,
+            0,
+            nullptr,
+            CREATE_ALWAYS,
+            FILE_ATTRIBUTE_NORMAL,
+            nullptr
+        );
+        
+        if (graph_file_handle_ == INVALID_HANDLE_VALUE) {
+            close_mmap();
+            return std::unexpected(core::error{
+                core::error_code::io_error,
+                "Failed to create graph file",
+                "disk_graph"
+            });
+        }
+        
+        size.QuadPart = graph_file_size_;
+        if (!SetFilePointerEx(graph_file_handle_, size, nullptr, FILE_BEGIN) ||
+            !SetEndOfFile(graph_file_handle_)) {
+            close_mmap();
+            return std::unexpected(core::error{
+                core::error_code::io_error,
+                "Failed to set graph file size",
+                "disk_graph"
+            });
+        }
+        
+        graph_mapping_handle_ = CreateFileMappingA(
+            graph_file_handle_,
+            nullptr,
+            PAGE_READWRITE,
+            static_cast<DWORD>(graph_file_size_ >> 32),
+            static_cast<DWORD>(graph_file_size_ & 0xFFFFFFFF),
+            nullptr
+        );
+        
+        if (!graph_mapping_handle_) {
+            close_mmap();
+            return std::unexpected(core::error{
+                core::error_code::io_error,
+                "Failed to create graph file mapping",
+                "disk_graph"
+            });
+        }
+        
+        graph_mmap_ = MapViewOfFile(
+            graph_mapping_handle_,
+            FILE_MAP_ALL_ACCESS,
+            0, 0,
+            graph_file_size_
+        );
+        
+        if (!graph_mmap_) {
+            close_mmap();
+            return std::unexpected(core::error{
+                core::error_code::io_error,
+                "Failed to map graph file",
+                "disk_graph"
+            });
+        }
+#else
+        // POSIX implementation
+        vectors_fd_ = open(vectors_path.c_str(), O_RDWR | O_CREAT | O_TRUNC, 0644);
+        if (vectors_fd_ < 0) {
+            return std::unexpected(core::error{
+                core::error_code::io_error,
+                "Failed to create vectors file",
+                "disk_graph"
+            });
+        }
+        
+        // Set file size
+        if (ftruncate(vectors_fd_, vectors_file_size_) != 0) {
+            close_mmap();
+            return std::unexpected(core::error{
+                core::error_code::io_error,
+                "Failed to set vectors file size",
+                "disk_graph"
+            });
+        }
+        
+        // Memory map the file
+        vectors_mmap_ = mmap(nullptr, vectors_file_size_,
+                           PROT_READ | PROT_WRITE, MAP_SHARED,
+                           vectors_fd_, 0);
+        
+        if (vectors_mmap_ == MAP_FAILED) {
+            vectors_mmap_ = nullptr;
+            close_mmap();
+            return std::unexpected(core::error{
+                core::error_code::io_error,
+                "Failed to map vectors file",
+                "disk_graph"
+            });
+        }
+        
+        // Same for graph file
+        graph_fd_ = open(graph_path.c_str(), O_RDWR | O_CREAT | O_TRUNC, 0644);
+        if (graph_fd_ < 0) {
+            close_mmap();
+            return std::unexpected(core::error{
+                core::error_code::io_error,
+                "Failed to create graph file",
+                "disk_graph"
+            });
+        }
+        
+        if (ftruncate(graph_fd_, graph_file_size_) != 0) {
+            close_mmap();
+            return std::unexpected(core::error{
+                core::error_code::io_error,
+                "Failed to set graph file size",
+                "disk_graph"
+            });
+        }
+        
+        graph_mmap_ = mmap(nullptr, graph_file_size_,
+                         PROT_READ | PROT_WRITE, MAP_SHARED,
+                         graph_fd_, 0);
+        
+        if (graph_mmap_ == MAP_FAILED) {
+            graph_mmap_ = nullptr;
+            close_mmap();
+            return std::unexpected(core::error{
+                core::error_code::io_error,
+                "Failed to map graph file",
+                "disk_graph"
+            });
+        }
+#endif
+        
+        return {};
     }
 
     auto build(span<const float> vectors, const VamanaBuildParams& params)
@@ -131,6 +420,10 @@ public:
 
         num_nodes_ = static_cast<std::uint32_t>(n);
         build_params_ = params;
+        
+        // Store vectors
+        vectors_.resize(vectors.size());
+        std::memcpy(vectors_.data(), vectors.data(), vectors.size() * sizeof(float));
         
         // Initialize graph with empty adjacency lists
         graph_.resize(num_nodes_);
@@ -216,12 +509,156 @@ public:
         
         return results;
     }
+    
+    auto load_vector_async(std::uint32_t node_id) const 
+        -> std::future<std::vector<float>> {
+        
+        auto promise = std::make_shared<std::promise<std::vector<float>>>();
+        auto future = promise->get_future();
+        
+        // Check if we have vectors in memory
+        if (!vectors_.empty()) {
+            if (node_id < num_nodes_) {
+                std::vector<float> vec(dimension_);
+                std::memcpy(vec.data(), &vectors_[node_id * dimension_], 
+                          dimension_ * sizeof(float));
+                promise->set_value(std::move(vec));
+            } else {
+                promise->set_value(std::vector<float>{});
+            }
+            return future;
+        }
+        
+        // Check if we have memory-mapped vectors
+        if (vectors_mmap_ && node_id < num_nodes_) {
+            std::vector<float> vec(dimension_);
+            const float* src = static_cast<const float*>(vectors_mmap_) + node_id * dimension_;
+            std::memcpy(vec.data(), src, dimension_ * sizeof(float));
+            promise->set_value(std::move(vec));
+            return future;
+        }
+        
+        // Use async I/O to load from disk
+        if (vector_file_path_.empty() || !async_io_queue_ || node_id >= num_nodes_) {
+            promise->set_value(std::vector<float>{});
+            return future;
+        }
+        
+        std::size_t offset = node_id * dimension_ * sizeof(float);
+        std::size_t read_size = dimension_ * sizeof(float);
+        auto buffer = std::make_unique<std::uint8_t[]>(read_size);
+        auto buffer_span = std::span<std::uint8_t>(buffer.get(), read_size);
+        
+        auto request = std::make_unique<io::AsyncIORequest>(
+            io::IOOpType::READ,
+            vector_file_path_,
+            offset,
+            buffer_span,
+            io::IOPriority::HIGH
+        );
+        
+        request->set_completion_callback(
+            [promise, buffer = std::move(buffer), dim = dimension_](
+                io::IOStatus status,
+                std::size_t bytes_transferred,
+                std::error_code error) {
+                
+                if (status == io::IOStatus::SUCCESS) {
+                    std::vector<float> vec(dim);
+                    std::memcpy(vec.data(), buffer.get(), bytes_transferred);
+                    promise->set_value(std::move(vec));
+                } else {
+                    promise->set_value(std::vector<float>{});
+                }
+            }
+        );
+        
+        async_io_queue_->submit(std::move(request));
+        return future;
+    }
 
     auto save(const std::string& path) const -> std::expected<void, core::error> {
         namespace fs = std::filesystem;
         
         // Create directory if it doesn't exist
         fs::create_directories(path);
+        
+        // Calculate sizes for disk files
+        std::size_t vectors_size = num_nodes_ * dimension_ * sizeof(float);
+        
+        // Calculate graph size (header + offsets + adjacency data)
+        std::size_t graph_data_size = 0;
+        for (const auto& neighbors : graph_) {
+            graph_data_size += neighbors.size() * sizeof(std::uint32_t);
+        }
+        std::size_t graph_size = sizeof(std::uint32_t) * 2 +  // num_nodes, dimension
+                                num_nodes_ * sizeof(std::uint64_t) * 2 +  // offsets and counts
+                                graph_data_size;
+        
+        // Open memory-mapped files for writing
+        auto mmap_result = const_cast<Impl*>(this)->open_mmap_write(
+            path + "/vectors.bin",
+            path + "/graph.adj",
+            vectors_size,
+            graph_size
+        );
+        
+        if (!mmap_result) {
+            return mmap_result;
+        }
+        
+        // Write vectors to memory-mapped file
+        if (vectors_.size() > 0) {
+            std::memcpy(vectors_mmap_, vectors_.data(), vectors_size);
+        }
+        
+        // Write graph structure to memory-mapped file
+        std::uint8_t* graph_ptr = static_cast<std::uint8_t*>(graph_mmap_);
+        
+        // Write header
+        *reinterpret_cast<std::uint32_t*>(graph_ptr) = num_nodes_;
+        graph_ptr += sizeof(std::uint32_t);
+        *reinterpret_cast<std::uint32_t*>(graph_ptr) = static_cast<std::uint32_t>(dimension_);
+        graph_ptr += sizeof(std::uint32_t);
+        
+        // Write offsets and adjacency lists
+        std::uint64_t current_offset = sizeof(std::uint32_t) * 2 + 
+                                      num_nodes_ * sizeof(std::uint64_t) * 2;
+        
+        // First pass: write offsets
+        std::uint64_t* offset_ptr = reinterpret_cast<std::uint64_t*>(graph_ptr);
+        std::uint32_t* count_ptr = reinterpret_cast<std::uint32_t*>(graph_ptr + num_nodes_ * sizeof(std::uint64_t));
+        
+        for (std::uint32_t i = 0; i < num_nodes_; ++i) {
+            offset_ptr[i] = current_offset;
+            count_ptr[i] = static_cast<std::uint32_t>(graph_[i].size());
+            current_offset += graph_[i].size() * sizeof(std::uint32_t);
+        }
+        
+        // Second pass: write adjacency data
+        std::uint8_t* adj_data_ptr = graph_ptr + sizeof(std::uint64_t) * num_nodes_ + 
+                                    sizeof(std::uint32_t) * num_nodes_;
+        
+        for (std::uint32_t i = 0; i < num_nodes_; ++i) {
+            if (!graph_[i].empty()) {
+                std::memcpy(adj_data_ptr, graph_[i].data(), 
+                          graph_[i].size() * sizeof(std::uint32_t));
+                adj_data_ptr += graph_[i].size() * sizeof(std::uint32_t);
+            }
+        }
+        
+        // Sync memory-mapped files to disk
+#ifdef _WIN32
+        FlushViewOfFile(vectors_mmap_, vectors_file_size_);
+        FlushViewOfFile(graph_mmap_, graph_file_size_);
+#else
+        msync(vectors_mmap_, vectors_file_size_, MS_SYNC);
+        msync(graph_mmap_, graph_file_size_, MS_SYNC);
+#endif
+        
+        // Store file paths for future use
+        const_cast<Impl*>(this)->graph_file_path_ = path + "/graph.adj";
+        const_cast<Impl*>(this)->vector_file_path_ = path + "/vectors.bin";
         
         // Save metadata
         std::string meta_path = path + "/graph.meta";
@@ -242,6 +679,10 @@ public:
         meta_file.write(reinterpret_cast<const char*>(&build_params_.alpha), 
                        sizeof(build_params_.alpha));
         
+        // Write flag for whether vectors are stored
+        bool has_vectors = !vectors_.empty();
+        meta_file.write(reinterpret_cast<const char*>(&has_vectors), sizeof(has_vectors));
+        
         // Save adjacency lists
         std::string adj_path = path + "/graph.adj";
         std::ofstream adj_file(adj_path, std::ios::binary);
@@ -258,6 +699,23 @@ public:
             adj_file.write(reinterpret_cast<const char*>(&degree), sizeof(degree));
             adj_file.write(reinterpret_cast<const char*>(neighbors.data()), 
                           degree * sizeof(std::uint32_t));
+        }
+        
+        // Save vectors if available
+        if (has_vectors) {
+            std::string vec_path = path + "/vectors.bin";
+            std::ofstream vec_file(vec_path, std::ios::binary);
+            if (!vec_file) {
+                return std::vesper_unexpected(core::error{
+                    core::error_code::io_failed,
+                    "Failed to create vectors file",
+                    "disk_graph.save"
+                });
+            }
+            
+            // Write vectors contiguously
+            vec_file.write(reinterpret_cast<const char*>(vectors_.data()),
+                          vectors_.size() * sizeof(float));
         }
         
         // Save entry points
@@ -281,6 +739,10 @@ public:
 
     auto load(const std::string& path) -> std::expected<void, core::error> {
         namespace fs = std::filesystem;
+        
+        // Store file paths for async I/O
+        graph_file_path_ = path + "/graph.adj";
+        vector_file_path_ = path + "/vectors.bin";
         
         // Load metadata
         std::string meta_path = path + "/graph.meta";
@@ -308,6 +770,12 @@ public:
                       sizeof(build_params_.degree));
         meta_file.read(reinterpret_cast<char*>(&build_params_.alpha), 
                       sizeof(build_params_.alpha));
+        
+        // Check if vectors are stored
+        bool has_vectors = false;
+        if (meta_file.peek() != EOF) {
+            meta_file.read(reinterpret_cast<char*>(&has_vectors), sizeof(has_vectors));
+        }
         
         // Load adjacency lists
         std::string adj_path = path + "/graph.adj";
@@ -348,6 +816,17 @@ public:
         entry_file.read(reinterpret_cast<char*>(entry_points_.data()),
                        num_entry * sizeof(std::uint32_t));
         
+        // Load vectors if available
+        if (has_vectors) {
+            std::string vec_path = path + "/vectors.bin";
+            std::ifstream vec_file(vec_path, std::ios::binary);
+            if (vec_file) {
+                vectors_.resize(num_nodes_ * dimension_);
+                vec_file.read(reinterpret_cast<char*>(vectors_.data()),
+                             vectors_.size() * sizeof(float));
+            }
+        }
+        
         return {};
     }
 
@@ -358,8 +837,8 @@ public:
         IOStats stats;
         stats.reads = io_stats_.reads.load();
         stats.read_bytes = io_stats_.read_bytes.load();
-        stats.cache_hits = 0; // io_stats_.cache_hits.load();
-        stats.cache_misses = 0; // io_stats_.cache_misses.load();
+        stats.cache_hits = io_stats_.cache_hits.load();
+        stats.cache_misses = io_stats_.cache_misses.load();
         stats.prefetch_hits = io_stats_.prefetch_hits.load();
         return stats;
     }
@@ -599,13 +1078,295 @@ private:
                               std::vector<std::pair<float, std::uint32_t>>,
                               ReverseDistanceComparator> {
         
-        // This would normally load vectors from disk
-        // For now, using cached data
-        return {};
+        // Priority queue for candidates (min-heap by distance)
+        std::priority_queue<std::pair<float, std::uint32_t>,
+                           std::vector<std::pair<float, std::uint32_t>>,
+                           DistanceComparator> candidates;
+        
+        // Priority queue for results (max-heap to keep k-nearest)
+        std::priority_queue<std::pair<float, std::uint32_t>,
+                           std::vector<std::pair<float, std::uint32_t>>,
+                           ReverseDistanceComparator> w;
+        
+        std::unordered_set<std::uint32_t> visited;
+        
+        // Initialize with entry points
+        for (std::uint32_t id : init_points) {
+            // Try to get vector from cache first
+            auto cached_vec = vector_cache_->get(id);
+            
+            float dist;
+            if (cached_vec.has_value()) {
+                // Use cached vector
+                dist = compute_l2_distance(query, cached_vec.value().data(), dimension_);
+                io_stats_.cache_hits.fetch_add(1);
+            } else {
+                // Load vector from disk if available
+                if (!vector_file_path_.empty()) {
+                    // Synchronous load for now (async would be better for batch)
+                    std::ifstream file(vector_file_path_, std::ios::binary);
+                    if (file) {
+                        file.seekg(id * dimension_ * sizeof(float));
+                        std::vector<float> vec(dimension_);
+                        file.read(reinterpret_cast<char*>(vec.data()), dimension_ * sizeof(float));
+                        
+                        if (file.good()) {
+                            dist = compute_l2_distance(query, vec.data(), dimension_);
+                            // Cache the loaded vector
+                            vector_cache_->put(id, vec, vec.size() * sizeof(float));
+                            io_stats_.reads.fetch_add(1);
+                            io_stats_.read_bytes.fetch_add(dimension_ * sizeof(float));
+                        } else {
+                            // Skip this point if can't load
+                            continue;
+                        }
+                    } else {
+                        // No vector file, skip
+                        continue;
+                    }
+                } else {
+                    // No vector data available
+                    continue;
+                }
+                io_stats_.cache_misses.fetch_add(1);
+            }
+            
+            candidates.push({dist, id});
+            w.push({dist, id});
+            visited.insert(id);
+        }
+        
+        // Beam search with L candidates
+        while (!candidates.empty()) {
+            auto [current_dist, current_id] = candidates.top();
+            candidates.pop();
+            
+            if (current_dist > w.top().first) {
+                break; // Prune search
+            }
+            
+            // Get neighbors from cache or disk
+            auto cached_neighbors = neighbor_cache_->get(current_id);
+            std::vector<std::uint32_t> neighbors;
+            
+            if (cached_neighbors.has_value()) {
+                neighbors = cached_neighbors.value();
+                io_stats_.cache_hits.fetch_add(1);
+            } else {
+                // Use in-memory graph if available
+                if (current_id < graph_.size()) {
+                    neighbors = graph_[current_id];
+                    neighbor_cache_->put(current_id, neighbors, neighbors.size() * sizeof(std::uint32_t));
+                }
+                io_stats_.cache_misses.fetch_add(1);
+            }
+            
+            // Check each neighbor
+            for (std::uint32_t neighbor : neighbors) {
+                if (visited.find(neighbor) == visited.end()) {
+                    visited.insert(neighbor);
+                    
+                    // Get neighbor vector
+                    auto neighbor_vec = vector_cache_->get(neighbor);
+                    float dist;
+                    
+                    if (neighbor_vec.has_value()) {
+                        dist = compute_l2_distance(query, neighbor_vec.value().data(), dimension_);
+                    } else if (!vector_file_path_.empty()) {
+                        // Load from disk
+                        std::ifstream file(vector_file_path_, std::ios::binary);
+                        if (file) {
+                            file.seekg(neighbor * dimension_ * sizeof(float));
+                            std::vector<float> vec(dimension_);
+                            file.read(reinterpret_cast<char*>(vec.data()), dimension_ * sizeof(float));
+                            
+                            if (file.good()) {
+                                dist = compute_l2_distance(query, vec.data(), dimension_);
+                                vector_cache_->put(neighbor, vec, vec.size() * sizeof(float));
+                                io_stats_.reads.fetch_add(1);
+                                io_stats_.read_bytes.fetch_add(dimension_ * sizeof(float));
+                            } else {
+                                continue;
+                            }
+                        } else {
+                            continue;
+                        }
+                    } else {
+                        continue;
+                    }
+                    
+                    // Update candidates and results
+                    if (dist < w.top().first || w.size() < params.L) {
+                        candidates.push({dist, neighbor});
+                        w.push({dist, neighbor});
+                        
+                        // Keep only L best candidates
+                        if (w.size() > params.L) {
+                            w.pop();
+                        }
+                    }
+                }
+            }
+        }
+        
+        return w;
     }
 
     void close_files() {
         // Close any open file handles
+        // Wait for pending I/O requests to complete
+        if (async_io_queue_) {
+            while (pending_io_requests_.load() > 0) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+        }
+    }
+    
+    // Async load neighbors for a node
+    auto load_neighbors_async(std::uint32_t node_id) const 
+        -> std::expected<void, core::error> {
+        
+        if (!async_io_queue_ || graph_file_path_.empty()) {
+            return std::vesper_unexpected(core::error{
+                core::error_code::precondition_failed,
+                "Async I/O not initialized",
+                "disk_graph.load_neighbors_async"
+            });
+        }
+        
+        // Check cache first
+        auto cached = neighbor_cache_->get(node_id);
+        if (cached.has_value()) {
+            return {};
+        }
+        
+        // Calculate file offset for this node's neighbors
+        // Assuming fixed-size neighbor lists for simplicity
+        std::size_t offset = node_id * (sizeof(std::uint32_t) * (build_params_.degree + 1));
+        std::size_t size = sizeof(std::uint32_t) * (build_params_.degree + 1);
+        
+        // Create buffer for read operation
+        auto buffer = std::make_shared<std::vector<std::uint8_t>>(size);
+        
+        // Create async read request
+        auto request = std::make_unique<io::AsyncIORequest>(
+            io::IOOpType::READ,
+            graph_file_path_,
+            offset,
+            std::span<std::uint8_t>(buffer->data(), buffer->size())
+        );
+        
+        // Set completion handler
+        auto completion_handler = [this, node_id, buffer](io::IOStatus status, 
+                                                          std::size_t bytes_transferred,
+                                                          const std::error_code& error) mutable {
+            if (status == io::IOStatus::SUCCESS && bytes_transferred > 0) {
+                // Parse the neighbor data from buffer
+                const std::uint8_t* data_ptr = buffer->data();
+                
+                // First 4 bytes: number of neighbors
+                std::uint32_t num_neighbors = 0;
+                if (bytes_transferred >= sizeof(std::uint32_t)) {
+                    std::memcpy(&num_neighbors, data_ptr, sizeof(std::uint32_t));
+                    data_ptr += sizeof(std::uint32_t);
+                    
+                    // Validate neighbor count
+                    if (num_neighbors > 0 && num_neighbors <= config_.max_degree) {
+                        std::vector<std::uint32_t> neighbors;
+                        neighbors.reserve(num_neighbors);
+                        
+                        // Read neighbor IDs (4 bytes each)
+                        std::size_t expected_size = sizeof(std::uint32_t) + num_neighbors * sizeof(std::uint32_t);
+                        if (bytes_transferred >= expected_size) {
+                            for (std::uint32_t i = 0; i < num_neighbors; ++i) {
+                                std::uint32_t neighbor_id = 0;
+                                std::memcpy(&neighbor_id, data_ptr + i * sizeof(std::uint32_t), sizeof(std::uint32_t));
+                                neighbors.push_back(neighbor_id);
+                            }
+                            
+                            // Update neighbor cache
+                            const_cast<Impl*>(this)->neighbor_cache_->put(node_id, std::move(neighbors));
+                        }
+                    }
+                }
+                
+                // Update statistics
+                io_stats_.reads.fetch_add(1);
+                io_stats_.read_bytes.fetch_add(bytes_transferred);
+            } else if (status == io::IOStatus::FAILED) {
+                // Log error but don't crash - use empty neighbor list
+                const_cast<Impl*>(this)->neighbor_cache_->put(node_id, std::vector<std::uint32_t>{});
+            }
+            
+            const_cast<Impl*>(this)->pending_io_requests_.fetch_sub(1);
+        };
+        
+        const_cast<Impl*>(this)->pending_io_requests_.fetch_add(1);
+        return async_io_queue_->submit(std::move(request));
+    }
+    
+    // Async load vector data for a node
+    auto load_vector_async(std::uint32_t node_id) const 
+        -> std::expected<void, core::error> {
+        
+        if (!async_io_queue_ || vector_file_path_.empty()) {
+            return std::vesper_unexpected(core::error{
+                core::error_code::precondition_failed,
+                "Async I/O not initialized",
+                "disk_graph.load_vector_async"
+            });
+        }
+        
+        // Check cache first
+        auto cached = vector_cache_->get(node_id);
+        if (cached.has_value()) {
+            return {};
+        }
+        
+        // Calculate file offset for this vector
+        std::size_t offset = node_id * dimension_ * sizeof(float);
+        std::size_t size = dimension_ * sizeof(float);
+        
+        // Create buffer for read operation
+        auto buffer = std::make_shared<std::vector<std::uint8_t>>(size);
+        
+        // Create async read request
+        auto request = std::make_unique<io::AsyncIORequest>(
+            io::IOOpType::READ,
+            vector_file_path_,
+            offset,
+            std::span<std::uint8_t>(buffer->data(), buffer->size())
+        );
+        
+        // Set completion handler
+        auto completion_handler = [this, node_id, buffer, dimension = dimension_](io::IOStatus status,
+                                                                                  std::size_t bytes_transferred,
+                                                                                  const std::error_code& error) mutable {
+            if (status == io::IOStatus::SUCCESS && bytes_transferred == dimension * sizeof(float)) {
+                // Parse the vector data from buffer
+                std::vector<float> vector(dimension);
+                
+                // Convert bytes to floats
+                const float* float_ptr = reinterpret_cast<const float*>(buffer->data());
+                std::memcpy(vector.data(), float_ptr, dimension * sizeof(float));
+                
+                // Update vector cache
+                const_cast<Impl*>(this)->vector_cache_->put(node_id, std::move(vector));
+                
+                // Update statistics
+                io_stats_.reads.fetch_add(1);
+                io_stats_.read_bytes.fetch_add(bytes_transferred);
+            } else if (status == io::IOStatus::FAILED) {
+                // Log error but don't crash - use zero vector as fallback
+                std::vector<float> zero_vector(dimension, 0.0f);
+                const_cast<Impl*>(this)->vector_cache_->put(node_id, std::move(zero_vector));
+            }
+            
+            const_cast<Impl*>(this)->pending_io_requests_.fetch_sub(1);
+        };
+        
+        const_cast<Impl*>(this)->pending_io_requests_.fetch_add(1);
+        return async_io_queue_->submit(std::move(request));
     }
     
     // Get neighbors (cache temporarily disabled)
@@ -636,8 +1397,27 @@ private:
     VamanaBuildStats build_stats_;
     mutable IOStats io_stats_;
     
-    // Graph structure (in production, this would be on disk)
+    // Disk-based storage with memory-mapped files
+#ifdef _WIN32
+    void* vectors_file_handle_{nullptr};
+    void* graph_file_handle_{nullptr};
+    void* vectors_mapping_handle_{nullptr};
+    void* graph_mapping_handle_{nullptr};
+#else
+    int vectors_fd_{-1};
+    int graph_fd_{-1};
+#endif
+    void* vectors_mmap_;
+    void* graph_mmap_;
+    std::size_t vectors_file_size_;
+    std::size_t graph_file_size_;
+    
+    // Graph adjacency list offsets (for variable-length neighbors)
+    std::vector<std::pair<std::uint64_t, std::uint32_t>> graph_offsets_;  // offset, count
+    
+    // In-memory structures for building (converted to disk format after build)
     std::vector<std::vector<std::uint32_t>> graph_;
+    std::vector<float> vectors_;
     
     // Entry points for search
     std::vector<std::uint32_t> entry_points_;
@@ -650,6 +1430,12 @@ private:
     mutable std::unique_ptr<cache::GraphNodeCache> neighbor_cache_;
     mutable std::unique_ptr<cache::VectorCache> vector_cache_;
     std::size_t cache_size_mb_;
+    
+    // Async I/O support
+    std::unique_ptr<io::AsyncIOQueue> async_io_queue_;
+    std::string graph_file_path_;
+    std::string vector_file_path_;
+    std::atomic<std::uint64_t> pending_io_requests_{0};
 };
 
 // Public interface implementation

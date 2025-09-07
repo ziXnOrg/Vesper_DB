@@ -21,6 +21,8 @@
 #include <shared_mutex>
 
 #include "vesper/error.hpp"
+#include "vesper/filter_expr.hpp"
+#include "vesper/metadata/metadata_store.hpp"
 #include "vesper/index/hnsw.hpp"
 #include "vesper/index/ivf_pq.hpp"
 #include "vesper/index/disk_graph.hpp"
@@ -79,6 +81,9 @@ struct QueryConfig {
     // Query planning hints
     bool use_query_planner{true};        /**< Enable cost-based planning */
     std::optional<IndexType> preferred_index; /**< Force specific index */
+    
+    // Metadata filtering
+    std::optional<filter_expr> filter;   /**< Optional metadata filter */
 };
 
 /** \brief Statistics for an index. */
@@ -178,6 +183,27 @@ public:
     auto search_batch(const float* queries, std::size_t nq, const QueryConfig& config)
         -> std::expected<std::vector<std::vector<std::pair<std::uint64_t, float>>>, core::error>;
     
+    /** \brief Update/replace an existing vector.
+     *
+     * \param id Vector ID to update
+     * \param vector New vector data [dim]
+     * \return Success or error
+     *
+     * Thread-safety: Thread-safe with concurrent reads
+     */
+    auto update(std::uint64_t id, const float* vector)
+        -> std::expected<void, core::error>;
+    
+    /** \brief Batch update vectors.
+     *
+     * \param ids Vector IDs to update [n]
+     * \param vectors New vector data [n x dim]
+     * \param n Number of vectors
+     * \return Success or error
+     */
+    auto update_batch(const std::uint64_t* ids, const float* vectors, std::size_t n)
+        -> std::expected<void, core::error>;
+    
     /** \brief Remove vector by ID.
      *
      * \param id Vector ID to remove
@@ -228,6 +254,31 @@ public:
      * \return Success or error
      */
     auto set_memory_budget(std::size_t budget_mb) -> std::expected<void, core::error>;
+    
+    /** \brief Add or update metadata for a vector.
+     *
+     * \param id Vector ID
+     * \param metadata Key-value metadata pairs
+     * \return Success or error
+     */
+    auto set_metadata(std::uint64_t id, 
+                     const std::unordered_map<std::string, metadata::MetadataValue>& metadata)
+        -> std::expected<void, core::error>;
+    
+    /** \brief Get metadata for a vector.
+     *
+     * \param id Vector ID
+     * \return Metadata or error
+     */
+    auto get_metadata(std::uint64_t id) const
+        -> std::expected<std::unordered_map<std::string, metadata::MetadataValue>, core::error>;
+    
+    /** \brief Remove metadata for a vector.
+     *
+     * \param id Vector ID
+     * \return Success or error
+     */
+    auto remove_metadata(std::uint64_t id) -> std::expected<void, core::error>;
     
 private:
     class Impl;

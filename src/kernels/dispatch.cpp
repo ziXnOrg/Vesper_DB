@@ -8,10 +8,8 @@
 #include <cpuid.h>  // For __get_cpuid on GCC/Clang
 #endif
 #include "vesper/kernels/backends/avx2.hpp"
-// Only include AVX-512 if explicitly enabled
-#ifdef __AVX512F__
+// Include AVX-512 backend
 #include "vesper/kernels/backends/avx512.hpp"
-#endif
 #endif
 
 #ifdef __aarch64__

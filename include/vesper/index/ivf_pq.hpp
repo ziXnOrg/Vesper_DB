@@ -159,6 +159,28 @@ public:
 
     /** \brief Reset index completely (requires retraining). */
     auto reset() -> void;
+    
+    /** \brief Reconstruct vectors from a specific cluster.
+     *
+     * Decodes PQ codes back to full vectors for a given cluster.
+     * 
+     * \param cluster_id Cluster index
+     * \param[out] ids Vector IDs in the cluster
+     * \param[out] vectors Reconstructed vectors (flattened)
+     * \return Success or error
+     */
+    auto reconstruct_cluster(std::uint32_t cluster_id,
+                            std::vector<std::uint64_t>& ids,
+                            std::vector<float>& vectors) const
+        -> std::expected<void, core::error>;
+    
+    /** \brief Reconstruct a single vector by ID.
+     *
+     * \param id Vector ID
+     * \return Reconstructed vector or error
+     */
+    auto reconstruct(std::uint64_t id) const
+        -> std::expected<std::vector<float>, core::error>;
 
     /** \brief Serialize index to file.
      *

@@ -311,7 +311,7 @@ constexpr std::size_t align_size(std::size_t size, std::size_t alignment) {
 /**
  * \brief Check if pointer is aligned
  */
-constexpr bool is_aligned(const void* ptr, std::size_t alignment) {
+inline bool is_aligned(const void* ptr, std::size_t alignment) {
     return (reinterpret_cast<std::uintptr_t>(ptr) & (alignment - 1)) == 0;
 }
 

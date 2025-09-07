@@ -1113,4 +1113,630 @@ auto HnswIndex::reachable_count_base_layer() const noexcept -> std::size_t {
     return impl_->reachable_count_base_layer();
 }
 
+auto HnswIndex::is_initialized() const noexcept -> bool {
+    return impl_ && impl_->state_.initialized;
+}
+
+auto HnswIndex::size() const noexcept -> std::size_t {
+    if (!impl_) return 0;
+    return impl_->state_.n_elements;
+}
+
+auto HnswIndex::get_max_layer() const noexcept -> int {
+    if (!impl_ || impl_->state_.n_elements == 0) return -1;
+    
+    std::lock_guard<std::mutex> lock(impl_->graph_mutex_);
+    std::uint32_t ep = impl_->state_.entry_point;
+    if (ep >= impl_->nodes_.size()) return -1;
+    
+    return static_cast<int>(impl_->nodes_[ep]->level);
+}
+
+auto HnswIndex::get_neighbors(std::uint64_t node_id, int layer) const 
+    -> std::vector<std::uint64_t> {
+    
+    if (!impl_ || layer < 0) return {};
+    
+    // Find internal index for this ID
+    std::uint32_t idx;
+    {
+        std::lock_guard<std::mutex> lock(impl_->label_lookup_mutex_);
+        auto it = impl_->id_to_idx_.find(node_id);
+        if (it == impl_->id_to_idx_.end()) {
+            return {};
+        }
+        idx = it->second;
+    }
+    
+    // Get neighbors at specified layer
+    std::vector<std::uint64_t> result;
+    {
+        std::lock_guard<std::mutex> lock(*impl_->node_mutexes_[idx]);
+        auto& node = impl_->nodes_[idx];
+        if (static_cast<std::uint32_t>(layer) <= node->level && 
+            static_cast<std::size_t>(layer) < node->neighbors.size()) {
+            
+            const auto& neighbors = node->neighbors[layer];
+            result.reserve(neighbors.size());
+            
+            // Convert internal indices to external IDs
+            for (std::uint32_t neighbor_idx : neighbors) {
+                if (neighbor_idx < impl_->nodes_.size()) {
+                    result.push_back(impl_->nodes_[neighbor_idx]->id);
+                }
+            }
+        }
+    }
+    
+    return result;
+}
+
+auto HnswIndex::get_reverse_neighbors(std::uint64_t node_id, int layer) const
+    -> std::vector<std::uint64_t> {
+    
+    if (!impl_ || layer < 0) return {};
+    
+    // Find internal index for this ID
+    std::uint32_t target_idx;
+    {
+        std::lock_guard<std::mutex> lock(impl_->label_lookup_mutex_);
+        auto it = impl_->id_to_idx_.find(node_id);
+        if (it == impl_->id_to_idx_.end()) {
+            return {};
+        }
+        target_idx = it->second;
+    }
+    
+    // Scan all nodes to find those pointing to target
+    std::vector<std::uint64_t> result;
+    for (std::uint32_t i = 0; i < impl_->state_.n_elements; ++i) {
+        if (i == target_idx) continue;
+        
+        std::lock_guard<std::mutex> lock(*impl_->node_mutexes_[i]);
+        auto& node = impl_->nodes_[i];
+        
+        if (node->deleted.load()) continue;
+        if (static_cast<std::uint32_t>(layer) > node->level) continue;
+        if (static_cast<std::size_t>(layer) >= node->neighbors.size()) continue;
+        
+        const auto& neighbors = node->neighbors[layer];
+        if (std::find(neighbors.begin(), neighbors.end(), target_idx) != neighbors.end()) {
+            result.push_back(node->id);
+        }
+    }
+    
+    return result;
+}
+
+auto HnswIndex::remove_edge(std::uint64_t from, std::uint64_t to, int layer)
+    -> std::expected<void, core::error> {
+    
+    using core::error;
+    using core::error_code;
+    
+    if (!impl_) {
+        return std::unexpected(error{
+            error_code::precondition_failed,
+            "Index not initialized",
+            "hnsw"
+        });
+    }
+    
+    if (layer < 0) {
+        return std::unexpected(error{
+            error_code::invalid_argument,
+            "Invalid layer",
+            "hnsw"
+        });
+    }
+    
+    // Find internal indices
+    std::uint32_t from_idx, to_idx;
+    {
+        std::lock_guard<std::mutex> lock(impl_->label_lookup_mutex_);
+        
+        auto from_it = impl_->id_to_idx_.find(from);
+        if (from_it == impl_->id_to_idx_.end()) {
+            return std::unexpected(error{
+                error_code::not_found,
+                "Source node not found",
+                "hnsw"
+            });
+        }
+        from_idx = from_it->second;
+        
+        auto to_it = impl_->id_to_idx_.find(to);
+        if (to_it == impl_->id_to_idx_.end()) {
+            return std::unexpected(error{
+                error_code::not_found,
+                "Target node not found",
+                "hnsw"
+            });
+        }
+        to_idx = to_it->second;
+    }
+    
+    // Remove edge
+    {
+        std::lock_guard<std::mutex> lock(*impl_->node_mutexes_[from_idx]);
+        auto& node = impl_->nodes_[from_idx];
+        
+        if (static_cast<std::uint32_t>(layer) > node->level) {
+            return std::unexpected(error{
+                error_code::invalid_argument,
+                "Layer exceeds node level",
+                "hnsw"
+            });
+        }
+        
+        if (static_cast<std::size_t>(layer) >= node->neighbors.size()) {
+            return std::unexpected(error{
+                error_code::invalid_argument,
+                "Invalid layer index",
+                "hnsw"
+            });
+        }
+        
+        auto& neighbors = node->neighbors[layer];
+        auto it = std::find(neighbors.begin(), neighbors.end(), to_idx);
+        if (it != neighbors.end()) {
+            neighbors.erase(it);
+        }
+    }
+    
+    return {};
+}
+
+auto HnswIndex::get_vector(std::uint64_t node_id) const
+    -> std::expected<std::vector<float>, core::error> {
+    
+    using core::error;
+    using core::error_code;
+    
+    if (!impl_) {
+        return std::unexpected(error{
+            error_code::precondition_failed,
+            "Index not initialized",
+            "hnsw"
+        });
+    }
+    
+    // Find internal index
+    std::uint32_t idx;
+    {
+        std::lock_guard<std::mutex> lock(impl_->label_lookup_mutex_);
+        auto it = impl_->id_to_idx_.find(node_id);
+        if (it == impl_->id_to_idx_.end()) {
+            return std::unexpected(error{
+                error_code::not_found,
+                "Node not found",
+                "hnsw"
+            });
+        }
+        idx = it->second;
+    }
+    
+    // Return copy of vector data
+    {
+        std::lock_guard<std::mutex> lock(*impl_->node_mutexes_[idx]);
+        auto& node = impl_->nodes_[idx];
+        if (node->deleted.load()) {
+            return std::unexpected(error{
+                error_code::not_found,
+                "Node is deleted",
+                "hnsw"
+            });
+        }
+        return node->data;
+    }
+}
+
+auto HnswIndex::extract_all_vectors(std::vector<std::uint64_t>& ids,
+                                   std::vector<float>& vectors) const
+    -> std::expected<void, core::error> {
+    
+    using core::error;
+    using core::error_code;
+    
+    if (!impl_) {
+        return std::unexpected(error{
+            error_code::precondition_failed,
+            "Index not initialized",
+            "hnsw"
+        });
+    }
+    
+    // Clear output vectors
+    ids.clear();
+    vectors.clear();
+    
+    // Count non-deleted nodes
+    std::size_t active_count = 0;
+    for (std::uint32_t i = 0; i < impl_->state_.n_elements; ++i) {
+        if (!impl_->nodes_[i]->deleted.load()) {
+            ++active_count;
+        }
+    }
+    
+    // Reserve space
+    ids.reserve(active_count);
+    vectors.reserve(active_count * impl_->state_.dim);
+    
+    // Extract all vectors
+    for (std::uint32_t i = 0; i < impl_->state_.n_elements; ++i) {
+        std::lock_guard<std::mutex> lock(*impl_->node_mutexes_[i]);
+        auto& node = impl_->nodes_[i];
+        
+        if (node->deleted.load()) continue;
+        
+        ids.push_back(node->id);
+        vectors.insert(vectors.end(), node->data.begin(), node->data.end());
+    }
+    
+    return {};
+}
+
+auto HnswIndex::update_connections(std::uint64_t node_id, int layer,
+                                  const std::vector<std::uint64_t>& new_neighbors)
+    -> std::expected<void, core::error> {
+    
+    using core::error;
+    using core::error_code;
+    
+    if (!impl_) {
+        return std::unexpected(error{
+            error_code::precondition_failed,
+            "Index not initialized",
+            "hnsw"
+        });
+    }
+    
+    if (layer < 0) {
+        return std::unexpected(error{
+            error_code::invalid_argument,
+            "Invalid layer",
+            "hnsw"
+        });
+    }
+    
+    // Find internal index for the node
+    std::uint32_t idx;
+    {
+        std::lock_guard<std::mutex> lock(impl_->label_lookup_mutex_);
+        auto it = impl_->id_to_idx_.find(node_id);
+        if (it == impl_->id_to_idx_.end()) {
+            return std::unexpected(error{
+                error_code::not_found,
+                "Node not found",
+                "hnsw"
+            });
+        }
+        idx = it->second;
+    }
+    
+    // Convert neighbor IDs to internal indices
+    std::vector<std::uint32_t> new_neighbor_indices;
+    new_neighbor_indices.reserve(new_neighbors.size());
+    
+    {
+        std::lock_guard<std::mutex> lock(impl_->label_lookup_mutex_);
+        for (std::uint64_t neighbor_id : new_neighbors) {
+            auto it = impl_->id_to_idx_.find(neighbor_id);
+            if (it != impl_->id_to_idx_.end()) {
+                new_neighbor_indices.push_back(it->second);
+            }
+        }
+    }
+    
+    // Update connections
+    {
+        std::lock_guard<std::mutex> lock(*impl_->node_mutexes_[idx]);
+        auto& node = impl_->nodes_[idx];
+        
+        if (static_cast<std::uint32_t>(layer) > node->level) {
+            return std::unexpected(error{
+                error_code::invalid_argument,
+                "Layer exceeds node level",
+                "hnsw"
+            });
+        }
+        
+        if (static_cast<std::size_t>(layer) >= node->neighbors.size()) {
+            node->neighbors.resize(layer + 1);
+        }
+        
+        node->neighbors[layer] = new_neighbor_indices;
+    }
+    
+    return {};
+}
+
+auto HnswIndex::entry_point(std::optional<std::uint64_t> new_entry_point)
+    -> std::uint64_t {
+    
+    if (!impl_) return std::numeric_limits<std::uint64_t>::max();
+    
+    if (new_entry_point.has_value()) {
+        // Set new entry point
+        std::lock_guard<std::mutex> lock(impl_->label_lookup_mutex_);
+        auto it = impl_->id_to_idx_.find(new_entry_point.value());
+        if (it != impl_->id_to_idx_.end()) {
+            std::lock_guard<std::mutex> graph_lock(impl_->graph_mutex_);
+            impl_->state_.entry_point = it->second;
+        }
+    }
+    
+    // Return current entry point ID
+    std::lock_guard<std::mutex> lock(impl_->graph_mutex_);
+    if (impl_->state_.entry_point < impl_->nodes_.size()) {
+        return impl_->nodes_[impl_->state_.entry_point]->id;
+    }
+    
+    return std::numeric_limits<std::uint64_t>::max();
+}
+
+auto HnswIndex::dimension() const noexcept -> std::size_t {
+    if (!impl_) return 0;
+    return impl_->state_.dim;
+}
+
+auto HnswIndex::mark_deleted(std::uint64_t id) -> std::expected<void, core::error> {
+    using core::error;
+    using core::error_code;
+    
+    if (!impl_) {
+        return std::unexpected(error{
+            error_code::precondition_failed,
+            "Index not initialized",
+            "hnsw"
+        });
+    }
+    
+    // Find internal index
+    std::uint32_t idx;
+    {
+        std::lock_guard<std::mutex> lock(impl_->label_lookup_mutex_);
+        auto it = impl_->id_to_idx_.find(id);
+        if (it == impl_->id_to_idx_.end()) {
+            return std::unexpected(error{
+                error_code::not_found,
+                "Node not found",
+                "hnsw"
+            });
+        }
+        idx = it->second;
+    }
+    
+    // Mark as deleted
+    impl_->nodes_[idx]->deleted.store(true);
+    
+    return {};
+}
+
+auto HnswIndex::resize(std::size_t new_max_elements) -> std::expected<void, core::error> {
+    using core::error;
+    using core::error_code;
+    
+    if (!impl_) {
+        return std::unexpected(error{
+            error_code::precondition_failed,
+            "Index not initialized",
+            "hnsw"
+        });
+    }
+    
+    std::lock_guard<std::mutex> lock(impl_->graph_mutex_);
+    
+    if (new_max_elements < impl_->state_.n_elements) {
+        return std::unexpected(error{
+            error_code::invalid_argument,
+            "Cannot resize below current element count",
+            "hnsw"
+        });
+    }
+    
+    // Reserve space
+    impl_->nodes_.reserve(new_max_elements);
+    impl_->id_to_idx_.reserve(new_max_elements);
+    
+    // Ensure we have enough mutexes
+    if (impl_->node_mutexes_.size() < new_max_elements) {
+        std::size_t old_size = impl_->node_mutexes_.size();
+        impl_->node_mutexes_.reserve(new_max_elements);
+        for (std::size_t i = old_size; i < new_max_elements; ++i) {
+            impl_->node_mutexes_.push_back(std::make_unique<std::mutex>());
+        }
+    }
+    
+    impl_->state_.max_elements = new_max_elements;
+    
+    return {};
+}
+
+auto HnswIndex::optimize() -> std::expected<void, core::error> {
+    using core::error;
+    using core::error_code;
+    
+    if (!impl_) {
+        return std::unexpected(error{
+            error_code::precondition_failed,
+            "Index not initialized",
+            "hnsw"
+        });
+    }
+    
+    // Optimization pass: prune and reconnect weak edges
+    for (std::uint32_t i = 0; i < impl_->state_.n_elements; ++i) {
+        if (impl_->nodes_[i]->deleted.load()) continue;
+        
+        for (std::size_t layer = 0; layer <= impl_->nodes_[i]->level; ++layer) {
+            std::lock_guard<std::mutex> lock(*impl_->node_mutexes_[i]);
+            auto& neighbors = impl_->nodes_[i]->neighbors[layer];
+            
+            // Remove deleted neighbors
+            neighbors.erase(
+                std::remove_if(neighbors.begin(), neighbors.end(),
+                    [this](std::uint32_t idx) {
+                        return idx >= impl_->state_.n_elements || 
+                               impl_->nodes_[idx]->deleted.load();
+                    }),
+                neighbors.end()
+            );
+            
+            // If too few neighbors, could search for replacements
+            // This would require more complex logic to maintain graph quality
+        }
+    }
+    
+    return {};
+}
+
+auto HnswIndex::save(const std::string& path) const -> std::expected<void, core::error> {
+    using core::error;
+    using core::error_code;
+    
+    if (!impl_) {
+        return std::unexpected(error{
+            error_code::precondition_failed,
+            "Index not initialized",
+            "hnsw"
+        });
+    }
+    
+    std::ofstream out(path, std::ios::binary);
+    if (!out) {
+        return std::unexpected(error{
+            error_code::io_error,
+            "Failed to open file for writing",
+            "hnsw"
+        });
+    }
+    
+    // Write header
+    out.write("HNSW", 4);
+    std::uint32_t version = 1;
+    out.write(reinterpret_cast<const char*>(&version), sizeof(version));
+    
+    // Write parameters
+    out.write(reinterpret_cast<const char*>(&impl_->state_.dim), sizeof(impl_->state_.dim));
+    out.write(reinterpret_cast<const char*>(&impl_->state_.params), sizeof(impl_->state_.params));
+    out.write(reinterpret_cast<const char*>(&impl_->state_.n_elements), sizeof(impl_->state_.n_elements));
+    out.write(reinterpret_cast<const char*>(&impl_->state_.entry_point), sizeof(impl_->state_.entry_point));
+    
+    // Write nodes
+    for (std::uint32_t i = 0; i < impl_->state_.n_elements; ++i) {
+        auto& node = impl_->nodes_[i];
+        
+        out.write(reinterpret_cast<const char*>(&node->id), sizeof(node->id));
+        out.write(reinterpret_cast<const char*>(&node->level), sizeof(node->level));
+        
+        bool deleted = node->deleted.load();
+        out.write(reinterpret_cast<const char*>(&deleted), sizeof(deleted));
+        
+        // Write vector data
+        out.write(reinterpret_cast<const char*>(node->data.data()), 
+                 node->data.size() * sizeof(float));
+        
+        // Write neighbors for each level
+        for (std::size_t layer = 0; layer <= node->level; ++layer) {
+            std::uint32_t n_neighbors = node->neighbors[layer].size();
+            out.write(reinterpret_cast<const char*>(&n_neighbors), sizeof(n_neighbors));
+            out.write(reinterpret_cast<const char*>(node->neighbors[layer].data()),
+                     n_neighbors * sizeof(std::uint32_t));
+        }
+    }
+    
+    return {};
+}
+
+auto HnswIndex::load(const std::string& path) -> std::expected<HnswIndex, core::error> {
+    using core::error;
+    using core::error_code;
+    
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        return std::unexpected(error{
+            error_code::io_error,
+            "Failed to open file for reading",
+            "hnsw"
+        });
+    }
+    
+    // Read and verify header
+    char magic[4];
+    in.read(magic, 4);
+    if (std::string(magic, 4) != "HNSW") {
+        return std::unexpected(error{
+            error_code::invalid_format,
+            "Invalid file format",
+            "hnsw"
+        });
+    }
+    
+    std::uint32_t version;
+    in.read(reinterpret_cast<char*>(&version), sizeof(version));
+    if (version != 1) {
+        return std::unexpected(error{
+            error_code::invalid_format,
+            "Unsupported version",
+            "hnsw"
+        });
+    }
+    
+    HnswIndex index;
+    index.impl_ = std::make_unique<Impl>();
+    auto& impl = *index.impl_;
+    
+    // Read parameters
+    in.read(reinterpret_cast<char*>(&impl.state_.dim), sizeof(impl.state_.dim));
+    in.read(reinterpret_cast<char*>(&impl.state_.params), sizeof(impl.state_.params));
+    in.read(reinterpret_cast<char*>(&impl.state_.n_elements), sizeof(impl.state_.n_elements));
+    in.read(reinterpret_cast<char*>(&impl.state_.entry_point), sizeof(impl.state_.entry_point));
+    
+    impl.state_.initialized = true;
+    impl.state_.rng.seed(impl.state_.params.seed);
+    
+    // Allocate nodes and mutexes
+    impl.nodes_.reserve(impl.state_.n_elements);
+    impl.node_mutexes_.reserve(impl.state_.n_elements);
+    
+    // Read nodes
+    for (std::uint32_t i = 0; i < impl.state_.n_elements; ++i) {
+        auto node = std::make_unique<HnswNode>();
+        
+        in.read(reinterpret_cast<char*>(&node->id), sizeof(node->id));
+        in.read(reinterpret_cast<char*>(&node->level), sizeof(node->level));
+        
+        bool deleted;
+        in.read(reinterpret_cast<char*>(&deleted), sizeof(deleted));
+        node->deleted.store(deleted);
+        
+        // Read vector data
+        node->data.resize(impl.state_.dim);
+        in.read(reinterpret_cast<char*>(node->data.data()),
+               impl.state_.dim * sizeof(float));
+        
+        // Read neighbors
+        node->neighbors.resize(node->level + 1);
+        for (std::size_t layer = 0; layer <= node->level; ++layer) {
+            std::uint32_t n_neighbors;
+            in.read(reinterpret_cast<char*>(&n_neighbors), sizeof(n_neighbors));
+            node->neighbors[layer].resize(n_neighbors);
+            in.read(reinterpret_cast<char*>(node->neighbors[layer].data()),
+                   n_neighbors * sizeof(std::uint32_t));
+        }
+        
+        impl.id_to_idx_[node->id] = i;
+        impl.nodes_.push_back(std::move(node));
+        impl.node_mutexes_.push_back(std::make_unique<std::mutex>());
+    }
+    
+    return index;
+}
+
+auto HnswIndex::get_build_params() const noexcept -> HnswBuildParams {
+    if (!impl_) return {};
+    return impl_->state_.params;
+}
+
 } // namespace vesper::index
