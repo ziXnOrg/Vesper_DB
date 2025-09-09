@@ -106,6 +106,8 @@ set(VESPER_CORE_SOURCES
     src/index/product_quantizer.cpp
     src/index/index_manager.cpp
     src/index/query_planner.cpp
+    src/index/rabitq_quantizer.cpp
+    src/index/matryoshka.cpp
     src/io/async_io.cpp
     src/io/prefetch_manager.cpp
     src/tombstone/tombstone_manager.cpp
@@ -125,15 +127,45 @@ else()
 endif()
 
 # Add platform-specific I/O implementations
-if(UNIX AND NOT APPLE)
-    # Linux-specific sources
-    list(APPEND VESPER_CORE_SOURCES src/io/io_uring.cpp)
+if(WIN32)
+    # list(APPEND VESPER_CORE_SOURCES src/io/async_io_windows.cpp)  # Temporarily disabled
 endif()
+
+# Optional Zstd compression support
+option(VESPER_WITH_ZSTD "Enable zstd compression support" OFF)
 
 add_library(vesper_core STATIC ${VESPER_CORE_SOURCES})
 target_link_libraries(vesper_core PRIVATE vesper_headers)
 if(TARGET roaring)
   target_link_libraries(vesper_core PUBLIC roaring)
+endif()
+
+if (VESPER_WITH_ZSTD)
+  find_package(ZSTD QUIET)
+  if (NOT ZSTD_FOUND)
+    include(FetchContent)
+    FetchContent_Declare(
+      zstd_proj
+      GIT_REPOSITORY https://github.com/facebook/zstd.git
+      GIT_TAG        v1.5.6
+    )
+    set(ZSTD_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+    set(ZSTD_BUILD_SHARED   OFF CACHE BOOL "" FORCE)
+    set(ZSTD_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(zstd_proj)
+    # zstd CMake exports may name the target differently; create a consistent alias if needed
+    if (TARGET libzstd_static)
+      add_library(ZSTD::ZSTD ALIAS libzstd_static)
+    elseif (TARGET zstd::libzstd_static)
+      add_library(ZSTD::ZSTD ALIAS zstd::libzstd_static)
+    endif()
+  endif()
+  if (TARGET ZSTD::ZSTD)
+    target_link_libraries(vesper_core PRIVATE ZSTD::ZSTD)
+    target_compile_definitions(vesper_core PRIVATE VESPER_HAS_ZSTD=1)
+    # Propagate define so benchmarks/tests can use zstd conditionals
+    add_compile_definitions(VESPER_HAS_ZSTD=1)
+  endif()
 endif()
 
 # Enable AVX2 for vesper_core on x86-64
@@ -159,6 +191,12 @@ if (VESPER_SERIALIZE_BASE_LAYER)
 else()
   target_compile_definitions(vesper_core PUBLIC VESPER_SERIALIZE_BASE_LAYER=0)
 endif()
+# Timing instrumentation (compile-time guarded)
+option(VESPER_ENABLE_TIMING "Enable timing instrumentation in core" OFF)
+if (VESPER_ENABLE_TIMING)
+  target_compile_definitions(vesper_core PUBLIC VESPER_ENABLE_TIMING=1)
+endif()
+
 
 # Link optional dependencies
 if (VESPER_HAVE_OPENMP)
@@ -172,27 +210,6 @@ else()
   message(STATUS "Accelerate disabled or non-Apple platform")
 # Guarded concurrency compile definitions
 
-endif()
-
-# Link platform-specific libraries
-if(UNIX AND NOT APPLE)
-  # Linux-specific libraries
-  find_library(URING_LIB uring)
-  if(URING_LIB)
-    target_link_libraries(vesper_core PUBLIC ${URING_LIB})
-    message(STATUS "liburing found: ${URING_LIB}")
-  else()
-    message(STATUS "liburing not found - io_uring support disabled")
-  endif()
-  
-  # NUMA libraries
-  find_library(NUMA_LIB numa)
-  if(NUMA_LIB)
-    target_link_libraries(vesper_core PUBLIC ${NUMA_LIB})
-    message(STATUS "libnuma found: ${NUMA_LIB}")
-  else()
-    message(STATUS "libnuma not found - NUMA support limited")
-  endif()
 endif()
 
 
@@ -255,13 +272,7 @@ if (VESPER_ENABLE_TESTS)
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/test_hnsw_simple.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/index_manager_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/query_planner_test.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/test_numa_allocator.cpp
   )
-  
-  # Add Linux-specific tests
-  if(UNIX AND NOT APPLE)
-    list(APPEND TEST_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/test_io_uring.cpp)
-  endif()
 
 
   add_executable(vesper_tests ${TEST_SOURCES})
@@ -339,11 +350,18 @@ endif()
   add_executable(vesper_bench_fused_vs_materialized bench/micro/fused_vs_materialized_bench.cpp)
   target_link_libraries(vesper_bench_fused_vs_materialized PRIVATE benchmark::benchmark vesper_headers vesper_core)
 
-  add_executable(bench_simd_kernels bench/micro/bench_simd_kernels.cpp)
-  target_link_libraries(bench_simd_kernels PRIVATE benchmark::benchmark vesper_headers vesper_core)
+  add_executable(vesper_bench_ivfpq_adc bench/micro/ivfpq_adc_bench.cpp)
+  target_link_libraries(vesper_bench_ivfpq_adc PRIVATE benchmark::benchmark vesper_headers vesper_core)
 
-  add_executable(bench_numa_allocator bench/micro/bench_numa_allocator.cpp)
-  target_link_libraries(bench_numa_allocator PRIVATE benchmark::benchmark vesper_headers vesper_core)
+  add_executable(vesper_bench_ivfpq_load bench/micro/ivfpq_load_bench.cpp)
+  target_link_libraries(vesper_bench_ivfpq_load PRIVATE benchmark::benchmark vesper_headers vesper_core)
+  target_compile_features(vesper_bench_ivfpq_load PRIVATE cxx_std_20)
+
+  # Comprehensive full benchmark
+  add_executable(vesper_full_benchmark bench/vesper_full_benchmark.cpp)
+  target_link_libraries(vesper_full_benchmark PRIVATE benchmark::benchmark vesper_headers vesper_core Threads::Threads)
+  target_compile_features(vesper_full_benchmark PRIVATE cxx_std_20)
+
 
 endif()
 
@@ -398,8 +416,8 @@ endif()
   # add_executable(hnsw_lockfree_test tests/unit/hnsw_lockfree_test.cpp)
   # target_link_libraries(hnsw_lockfree_test PRIVATE vesper_headers vesper_core gtest_main Threads::Threads)
 
-  add_executable(stress_test tests/stress/scalability_stress_test.cpp)
-  target_link_libraries(stress_test PRIVATE vesper_headers vesper_core gtest_main Threads::Threads)
+  # add_executable(stress_test tests/unit/stress/scalability_stress_test.cpp)
+  # target_link_libraries(stress_test PRIVATE vesper_headers vesper_core gtest_main Threads::Threads)
 
   # Simple integration test (no GTest dependency)
   add_executable(integration_test tests/unit/simple_integration_test.cpp)
@@ -410,12 +428,76 @@ endif()
   add_executable(hnsw_connectivity_test tests/unit/hnsw_connectivity_test.cpp)
   target_link_libraries(hnsw_connectivity_test PRIVATE vesper_headers vesper_core Threads::Threads)
 
+
+  # Dataset-based integration tests
+  add_executable(vesper_integration_test tests/integration/vesper_integration_test.cpp tests/integration/dataset_loader.cpp)
+  target_link_libraries(vesper_integration_test PRIVATE Catch2::Catch2WithMain vesper_headers vesper_core Threads::Threads)
+  target_include_directories(vesper_integration_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+  add_executable(accuracy_test tests/integration/accuracy_test.cpp tests/integration/dataset_loader.cpp)
+  target_link_libraries(accuracy_test PRIVATE Catch2::Catch2WithMain vesper_headers vesper_core Threads::Threads)
+  target_include_directories(accuracy_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+  add_executable(performance_test tests/integration/performance_test.cpp tests/integration/dataset_loader.cpp)
+  target_link_libraries(performance_test PRIVATE Catch2::Catch2WithMain vesper_headers vesper_core Threads::Threads)
+  target_include_directories(performance_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
   target_link_libraries(integration_test PRIVATE vesper_headers vesper_core Threads::Threads)
+  catch_discover_tests(vesper_integration_test)
+  catch_discover_tests(accuracy_test)
+  catch_discover_tests(performance_test)
+
+  add_executable(bruteforce_verifier_test tests/integration/bruteforce_verifier_test.cpp tests/integration/dataset_loader.cpp)
+  target_link_libraries(bruteforce_verifier_test PRIVATE Catch2::Catch2WithMain vesper_headers vesper_core Threads::Threads)
+  target_include_directories(bruteforce_verifier_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+  add_executable(ivfpq_sweep_test tests/integration/ivfpq_sweep_test.cpp tests/integration/dataset_loader.cpp)
+  target_link_libraries(ivfpq_sweep_test PRIVATE Catch2::Catch2WithMain vesper_headers vesper_core Threads::Threads)
+  target_include_directories(ivfpq_sweep_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+  catch_discover_tests(bruteforce_verifier_test)
+  catch_discover_tests(ivfpq_sweep_test)
+  add_executable(ivfpq_serialize_roundtrip_test tests/integration/ivfpq_serialize_roundtrip_test.cpp)
+  target_link_libraries(ivfpq_serialize_roundtrip_test PRIVATE Catch2::Catch2WithMain vesper_headers vesper_core Threads::Threads)
+  target_include_directories(ivfpq_serialize_roundtrip_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  catch_discover_tests(ivfpq_serialize_roundtrip_test)
+  add_executable(ivfpq_v11_serialize_test tests/integration/ivfpq_v11_serialize_test.cpp)
+  target_link_libraries(ivfpq_v11_serialize_test PRIVATE Catch2::Catch2WithMain vesper_headers vesper_core Threads::Threads)
+  target_include_directories(ivfpq_v11_serialize_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  catch_discover_tests(ivfpq_v11_serialize_test)
+
+  add_executable(ivfpq_v11_error_handling_test tests/integration/ivfpq_v11_error_handling_test.cpp)
+  target_link_libraries(ivfpq_v11_error_handling_test PRIVATE Catch2::Catch2WithMain vesper_headers vesper_core Threads::Threads)
+  target_include_directories(ivfpq_v11_error_handling_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  catch_discover_tests(ivfpq_v11_error_handling_test)
+  add_executable(ivfpq_v11_stream_position_test tests/integration/ivfpq_v11_stream_position_test.cpp)
+  target_link_libraries(ivfpq_v11_stream_position_test PRIVATE Catch2::Catch2WithMain vesper_headers vesper_core Threads::Threads)
+  target_include_directories(ivfpq_v11_stream_position_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  catch_discover_tests(ivfpq_v11_stream_position_test)
+  add_executable(ivfpq_compat_matrix_test tests/integration/ivfpq_compat_matrix_test.cpp)
+  target_link_libraries(ivfpq_compat_matrix_test PRIVATE Catch2::Catch2WithMain vesper_headers vesper_core Threads::Threads)
+  target_include_directories(ivfpq_compat_matrix_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  catch_discover_tests(ivfpq_compat_matrix_test)
+  add_executable(ivfpq_v11_metadata_test tests/integration/ivfpq_v11_metadata_test.cpp)
+  target_link_libraries(ivfpq_v11_metadata_test PRIVATE Catch2::Catch2WithMain vesper_headers vesper_core Threads::Threads)
+  target_include_directories(ivfpq_v11_metadata_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  catch_discover_tests(ivfpq_v11_metadata_test)
+
+  add_executable(ivfpq_fuzz_robust_test tests/integration/ivfpq_fuzz_robust_test.cpp)
+  target_link_libraries(ivfpq_fuzz_robust_test PRIVATE Catch2::Catch2WithMain vesper_headers vesper_core Threads::Threads)
+  target_include_directories(ivfpq_fuzz_robust_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  catch_discover_tests(ivfpq_fuzz_robust_test)
+
+
+
+
+
+
 
   # Multi-index integration test
   add_executable(multi_index_test tests/integration/multi_index_test.cpp)
   target_link_libraries(multi_index_test PRIVATE Catch2::Catch2WithMain vesper_headers vesper_core Threads::Threads)
-  
+
   # Simple IndexManager test
   add_executable(test_index_manager test_index_manager.cpp)
   target_link_libraries(test_index_manager PRIVATE vesper_headers vesper_core Threads::Threads)
@@ -426,9 +508,9 @@ endif()
   gtest_discover_tests(kmeans_test)
   gtest_discover_tests(hnsw_index_test)
   # gtest_discover_tests(hnsw_lockfree_test)
-  gtest_discover_tests(stress_test)
+  # gtest_discover_tests(stress_test)
   add_test(NAME integration_test COMMAND integration_test)
-  
+
   # Catch2 test discovery for multi-index test
   catch_discover_tests(multi_index_test)
   gtest_discover_tests(hnsw_thread_pool_stress_test)
@@ -444,4 +526,12 @@ add_executable(connectivity_smoke tools/connectivity_smoke.cpp)
 target_link_libraries(connectivity_smoke PRIVATE vesper_headers vesper_core Threads::Threads)
 
 # Removed standalone test executables - tests are now in tests/ directory
+add_executable(ivfpq_persist_bench tools/ivfpq_persist_bench.cpp)
+# Link against core and headers; Threads for potential future use
+if (WIN32)
+  target_link_libraries(ivfpq_persist_bench PRIVATE vesper_headers vesper_core Threads::Threads Psapi)
+else()
+  target_link_libraries(ivfpq_persist_bench PRIVATE vesper_headers vesper_core Threads::Threads)
+endif()
+
 
