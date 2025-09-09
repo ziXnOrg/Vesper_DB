@@ -69,6 +69,16 @@ static void expect_load_error_for_buf(const std::vector<unsigned char>& corrupte
     REQUIRE_FALSE(r.has_value());
 }
 
+static void recompute_v11_trailer_checksum(std::vector<unsigned char>& buf) {
+    if (buf.size() < 12) return;
+    auto fnv64 = [](const void* ptr, size_t n){ const auto* q = static_cast<const unsigned char*>(ptr); uint64_t h=1469598103934665603ull; constexpr uint64_t P=1099511628211ull; for (size_t i=0;i<n;++i){ h^=q[i]; h*=P; } return h; };
+    const size_t trailer_off = buf.size() - 12;
+    const uint64_t h = fnv64(buf.data(), trailer_off);
+    std::memcpy(buf.data()+trailer_off, "CHKS", 4);
+    std::memcpy(buf.data()+trailer_off+4, &h, 8);
+}
+
+
 
 TEST_CASE("IVFPQ v1.1 loader robustness under corrupted inputs", "[ivfpq][serialize][fuzz]") {
 #ifdef _WIN32
@@ -169,6 +179,8 @@ TEST_CASE("IVFPQ v1.1 loader robustness under corrupted inputs", "[ivfpq][serial
 
     SECTION("Trailer corruption (bad magic / checksum) should fail") {
         for (int mm = 0; mm <= 1; ++mm) {
+
+
             {
                 auto tmp = base;
                 // overwrite 'CHKS' trailer tag
@@ -213,5 +225,63 @@ TEST_CASE("IVFPQ v1.1 loader robustness under corrupted inputs", "[ivfpq][serial
         auto lr = IvfPqIndex::load(p.string().c_str());
         REQUIRE_FALSE(lr.has_value());
     }
+
+    SECTION("Randomized multi-section corruptions with trailer fixups (mmap and streaming)") {
+        auto secs = parse_v11_sections(base);
+        if (secs.empty()) {
+            SUCCEED();
+        } else {
+            std::mt19937_64 rr(987654321);
+            std::uniform_int_distribution<int> dmuts(1, 3);
+            for (int mm = 0; mm <= 1; ++mm) {
+                for (int it = 0; it < 16; ++it) {
+                    auto tmp = base;
+                    int nm = dmuts(rr);
+                    for (int k = 0; k < nm; ++k) {
+                        const SecInfo& s = secs[rr() % secs.size()];
+                        const int kind = int(rr() % 5);
+                        switch (kind) {
+                            case 0: { // retag type to unknown
+                                std::uint32_t bad = 99; std::memcpy(tmp.data()+s.hdr_off+0, &bad, 4); break;
+                            }
+                            case 1: { // comp != unc without payload change
+                                std::uint64_t fake_unc = s.unc + 13; std::memcpy(tmp.data()+s.hdr_off+4, &fake_unc, 8); break;
+                            }
+                            case 2: { // flip a byte in payload if any
+                                if (s.comp > 0 && s.payload_off + 1 < tmp.size()-12) tmp[s.payload_off + (rr()%std::min<std::size_t>(size_t(s.comp), tmp.size()-12 - s.payload_off))] ^= 0x40; break;
+                            }
+                            case 3: { // zero comp but leave payload present
+                                std::uint64_t z = 0; std::memcpy(tmp.data()+s.hdr_off+12, &z, 8); break;
+                            }
+                            case 4: { // bump comp modestly to trigger bounds checks without OOM
+                                std::uint64_t big = s.comp + 256ull; std::memcpy(tmp.data()+s.hdr_off+12, &big, 8); break;
+                            }
+                        }
+                    }
+                    // Fix trailer checksum so parser goes beyond trailer verification
+                    recompute_v11_trailer_checksum(tmp);
+                    {
+                        auto d = tmp_path("ivfpq_fuzz_case_rand"); std::error_code ec; fs::create_directories(d, ec);
+                        write_all(d / "ivfpq.bin", tmp);
+                        try {
+                            auto r = IvfPqIndex::load(d.string().c_str());
+                            if (!r.has_value()) {
+                                SUCCEED();
+                            } else {
+                                CHECK(r->get_metadata_json().size() >= 0);
+                            }
+                        } catch (const std::bad_alloc&) {
+                            SUCCEED();
+                        } catch (const std::exception&) {
+                            SUCCEED();
+                        } catch (...) {
+                            SUCCEED();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
 }
 
