@@ -1875,33 +1875,38 @@ auto IvfPqIndex::Impl::add(const std::uint64_t* ids, const float* data, std::siz
 {
     // SGEMM-based projection screening: compute [qb x jb] dot blocks and update heaps
     const std::size_t QB = 256;
-    std::vector<float> dots; dots.resize(QB * jb);
-    for (std::size_t i0 = 0; i0 < n; i0 += QB) {
-        const std::size_t qb = std::min<std::size_t>(QB, n - i0);
-        // C = A * B^T where A = qproj[i0:i0+qb, :], B = proj_centroids_rm_[j0:j0+jb, :]
-        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
-                    static_cast<int>(qb), static_cast<int>(jb), static_cast<int>(p),
-                    1.0f,
-                    qproj.data() + i0 * p, static_cast<int>(p),
-                    proj_centroids_rm_.data() + j0 * p, static_cast<int>(p),
-                    0.0f,
-                    dots.data(), static_cast<int>(jb));
-        for (std::size_t r = 0; r < qb; ++r) {
-            const std::size_t i = i0 + r;
-            const float qi = qnorm[i];
-            const std::size_t base = off[i];
-            std::size_t& hs = heap_size[i];
-            for (std::size_t jj = 0; jj < jb; ++jj) {
-                const std::size_t cj = j0 + jj;
-                const float dot = dots[r * jb + jj];
-                const float distp = qi + proj_centroid_norms_[cj] - 2.0f * dot;
-                if (hs < L) {
-                    heap_storage[base + hs++] = Cand{distp, static_cast<std::uint32_t>(cj)};
-                    if (hs == L) std::make_heap(heap_storage.begin() + base, heap_storage.begin() + base + hs, cmp);
-                } else if (distp < heap_storage[base].dist) {
-                    std::pop_heap(heap_storage.begin() + base, heap_storage.begin() + base + hs, cmp);
-                    heap_storage[base + hs - 1] = Cand{distp, static_cast<std::uint32_t>(cj)};
-                    std::push_heap(heap_storage.begin() + base, heap_storage.begin() + base + hs, cmp);
+    const std::size_t CB = 256;
+    const std::size_t C = state_.params.nlist;
+    std::vector<float> dots; dots.resize(QB * CB);
+    for (std::size_t j0 = 0; j0 < C; j0 += CB) {
+        const std::size_t jb = std::min<std::size_t>(CB, C - j0);
+        for (std::size_t i0 = 0; i0 < n; i0 += QB) {
+            const std::size_t qb = std::min<std::size_t>(QB, n - i0);
+            // C = A * B^T where A = qproj[i0:i0+qb, :], B = proj_centroids_rm_[j0:j0+jb, :]
+            cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                        static_cast<int>(qb), static_cast<int>(jb), static_cast<int>(p),
+                        1.0f,
+                        qproj.data() + i0 * p, static_cast<int>(p),
+                        proj_centroids_rm_.data() + j0 * p, static_cast<int>(p),
+                        0.0f,
+                        dots.data(), static_cast<int>(jb));
+            for (std::size_t r = 0; r < qb; ++r) {
+                const std::size_t i = i0 + r;
+                const float qi = qnorm[i];
+                const std::size_t base = off[i];
+                std::size_t& hs = heap_size[i];
+                for (std::size_t jj = 0; jj < jb; ++jj) {
+                    const std::size_t cj = j0 + jj;
+                    const float dot = dots[r * jb + jj];
+                    const float distp = qi + proj_centroid_norms_[cj] - 2.0f * dot;
+                    if (hs < L) {
+                        heap_storage[base + hs++] = Cand{distp, static_cast<std::uint32_t>(cj)};
+                        if (hs == L) std::make_heap(heap_storage.begin() + base, heap_storage.begin() + base + hs, cmp);
+                    } else if (distp < heap_storage[base].dist) {
+                        std::pop_heap(heap_storage.begin() + base, heap_storage.begin() + base + hs, cmp);
+                        heap_storage[base + hs - 1] = Cand{distp, static_cast<std::uint32_t>(cj)};
+                        std::push_heap(heap_storage.begin() + base, heap_storage.begin() + base + hs, cmp);
+                    }
                 }
             }
         }
