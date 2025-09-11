@@ -50,6 +50,8 @@ namespace vesper::index {
 #endif
 
 
+#include "vesper/index/projection_assigner.hpp"
+
 
 // Max size for metadata JSON blob (64 KiB)
 static constexpr std::size_t kMaxMetadataSize = 64u * 1024u;
@@ -1865,183 +1867,34 @@ auto IvfPqIndex::Impl::add(const std::uint64_t* ids, const float* data, std::siz
             }
             qnorm[i] = static_cast<float>(accn);
         }
-        // Candidate heaps per query
-        struct Cand { float dist; std::uint32_t idx; };
-        auto cmp = [](const Cand& a, const Cand& b){ return a.dist < b.dist; };
-        std::vector<std::size_t> heap_size(n, 0);
-        std::vector<Cand> heap_storage(n * static_cast<std::size_t>(L), Cand{std::numeric_limits<float>::infinity(), 0});
-        std::vector<std::size_t> off(n+1, 0); for (std::size_t i = 0; i <= n; ++i) off[i] = i * static_cast<std::size_t>(L);
-#ifdef VESPER_HAS_CBLAS
-{
-    // SGEMM-based projection screening: compute [qb x jb] dot blocks and update heaps
-    const std::size_t QB = 256;
-    const std::size_t CB = 256;
-    const std::size_t C = state_.params.nlist;
-    std::vector<float> dots; dots.resize(QB * CB);
-    for (std::size_t j0 = 0; j0 < C; j0 += CB) {
-        const std::size_t jb = std::min<std::size_t>(CB, C - j0);
-        for (std::size_t i0 = 0; i0 < n; i0 += QB) {
-            const std::size_t qb = std::min<std::size_t>(QB, n - i0);
-            // C = A * B^T where A = qproj[i0:i0+qb, :], B = proj_centroids_rm_[j0:j0+jb, :]
-            cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
-                        static_cast<int>(qb), static_cast<int>(jb), static_cast<int>(p),
-                        1.0f,
-                        qproj.data() + i0 * p, static_cast<int>(p),
-                        proj_centroids_rm_.data() + j0 * p, static_cast<int>(p),
-                        0.0f,
-                        dots.data(), static_cast<int>(jb));
-            for (std::size_t r = 0; r < qb; ++r) {
-                const std::size_t i = i0 + r;
-                const float qi = qnorm[i];
-                const std::size_t base = off[i];
-                std::size_t& hs = heap_size[i];
-                for (std::size_t jj = 0; jj < jb; ++jj) {
-                    const std::size_t cj = j0 + jj;
-                    const float dot = dots[r * jb + jj];
-                    const float distp = qi + proj_centroid_norms_[cj] - 2.0f * dot;
-                    if (hs < L) {
-                        heap_storage[base + hs++] = Cand{distp, static_cast<std::uint32_t>(cj)};
-                        if (hs == L) std::make_heap(heap_storage.begin() + base, heap_storage.begin() + base + hs, cmp);
-                    } else if (distp < heap_storage[base].dist) {
-                        std::pop_heap(heap_storage.begin() + base, heap_storage.begin() + base + hs, cmp);
-                        heap_storage[base + hs - 1] = Cand{distp, static_cast<std::uint32_t>(cj)};
-                        std::push_heap(heap_storage.begin() + base, heap_storage.begin() + base + hs, cmp);
-                    }
-                }
-            }
+        // Projection screening via helper (CBLAS backend when available; scalar fallback otherwise)
+        std::vector<std::uint32_t> cand_idx(n * static_cast<std::size_t>(L));
+        std::vector<float> cand_dist(n * static_cast<std::size_t>(L));
+        {
+            using vesper::index::ProjScreenInputs;
+            using vesper::index::ProjScreenOutputs;
+            ProjScreenInputs psi{
+                qproj.data(),
+                qnorm.data(),
+                n,
+                p,
+                proj_centroids_rm_.data(),
+                proj_centroid_norms_.data(),
+                proj_centroids_pack8_.empty() ? nullptr : proj_centroids_pack8_.data(),
+                static_cast<std::size_t>(state_.params.nlist),
+                L
+            };
+            ProjScreenOutputs pso{ cand_idx.data(), cand_dist.data() };
+            projection_screen_select(psi, pso);
         }
-    }
-}
-#else
 
-        // Blocked fused dot-and-select with OpenMP over queries
-        const std::size_t C = state_.params.nlist; const std::size_t CB = 256;
-        for (std::size_t j0 = 0; j0 < C; j0 += CB) {
-            const std::size_t jb = std::min<std::size_t>(CB, C - j0);
-            if (p == 16 && !proj_centroids_pack8_.empty()) {
-                const std::size_t C = state_.params.nlist;
-                const std::size_t ntiles = (n / 16) * 16;
-                // Process full 16x8 tiles
-                #pragma omp parallel for schedule(static)
-                for (int tile = 0; tile < static_cast<int>(ntiles/16); ++tile) {
-                    const int i0 = tile * 16;
-                    // Pack A-panel: Apack[k*16 + r] = qproj[(i0+r)*p + k]
-                    alignas(32) float Apack[16*16];
-                    for (int k = 0; k < 16; ++k) {
-                        for (int r = 0; r < 16; ++r) {
-                            Apack[k*16 + r] = qproj[(static_cast<std::size_t>(i0 + r) * p) + k];
-                        }
-                    }
-                    const std::size_t cb_start = (j0 / 8) * 8;
-                    const std::size_t cb_end = j0 + jb;
-                    for (std::size_t cjblk = cb_start; cjblk < cb_end; cjblk += 8) {
-                        const std::size_t block_id = cjblk / 8;
-                        const float* Bpack = proj_centroids_pack8_.data() + block_id * (16 * 8);
-                        // Accumulators for top and bottom 8 rows
-                        __m256 Ctop[8]; __m256 Cbot[8];
-                        for (int j = 0; j < 8; ++j) { Ctop[j] = _mm256_setzero_ps(); Cbot[j] = _mm256_setzero_ps(); }
-                        // Rank-1 updates over k=0..15
-                        for (int k = 0; k < 16; ++k) {
-                            __m256 a_top = _mm256_loadu_ps(Apack + k*16 + 0);
-                            __m256 a_bot = _mm256_loadu_ps(Apack + k*16 + 8);
-                            float yk_arr[8];
-                            #if defined(__AVX__)
-                            __m256 yk = _mm256_loadu_ps(Bpack + k*8);
-                            _mm256_storeu_ps(yk_arr, yk);
-                            #else
-                            for (int lane=0; lane<8; ++lane) yk_arr[lane] = Bpack[k*8 + lane];
-                            #endif
-                            for (int j = 0; j < 8; ++j) {
-                                __m256 b = _mm256_set1_ps(yk_arr[j]);
-                                Ctop[j] = _mm256_fmadd_ps(a_top, b, Ctop[j]);
-                                Cbot[j] = _mm256_fmadd_ps(a_bot, b, Cbot[j]);
-                            }
-                        }
-                        // Epilogue: convert to distances and update heaps
-                        float dots_top[8][8]; float dots_bot[8][8];
-                        for (int j = 0; j < 8; ++j) { _mm256_storeu_ps(dots_top[j], Ctop[j]); _mm256_storeu_ps(dots_bot[j], Cbot[j]); }
-                        for (int r = 0; r < 16; ++r) {
-                            const std::size_t i = static_cast<std::size_t>(i0 + r);
-                            const float qi = qnorm[i];
-                            const std::size_t base = off[i];
-                            std::size_t& hs = heap_size[i];
-                            for (int lane = 0; lane < 8; ++lane) {
-                                const std::size_t cj = cjblk + static_cast<std::size_t>(lane);
-                                if (cj < j0 || cj >= (j0 + jb) || cj >= C) continue;
-                                const float dot = (r < 8 ? dots_top[lane][r] : dots_bot[lane][r - 8]);
-                                const float distp = qi + proj_centroid_norms_[cj] - 2.0f * dot;
-                                if (hs < L) {
-                                    heap_storage[base + hs++] = Cand{distp, static_cast<std::uint32_t>(cj)};
-                                    if (hs == L) std::make_heap(heap_storage.begin() + base, heap_storage.begin() + base + hs, cmp);
-                                } else if (distp < heap_storage[base].dist) {
-                                    std::pop_heap(heap_storage.begin() + base, heap_storage.begin() + base + hs, cmp);
-                                    heap_storage[base + hs - 1] = Cand{distp, static_cast<std::uint32_t>(cj)};
-                                    std::push_heap(heap_storage.begin() + base, heap_storage.begin() + base + hs, cmp);
-                                }
-                            }
-                        }
-                    }
-                    // Handle centroid tail (<8) for these rows
-                    const std::size_t tail_start = ((j0 + jb) / 8) * 8;
-                    for (std::size_t cj = std::max<std::size_t>(j0, tail_start); cj < j0 + jb; ++cj) {
-                        const float* yc = proj_centroids_rm_.data() + cj * p;
-                        for (int r = 0; r < 16; ++r) {
-                            const std::size_t i = static_cast<std::size_t>(i0 + r);
-                            const float* qp = qproj.data() + i * p;
-                            float dot = 0.0f; for (int k = 0; k < 16; ++k) dot += qp[k] * yc[k];
-                            const float distp = qnorm[i] + proj_centroid_norms_[cj] - 2.0f * dot;
-                            const std::size_t base = off[i];
-                            std::size_t& hs = heap_size[i];
-                            if (hs < L) { heap_storage[base + hs++] = Cand{distp, static_cast<std::uint32_t>(cj)}; if (hs == L) std::make_heap(heap_storage.begin()+base, heap_storage.begin()+base+hs, cmp); }
-                            else if (distp < heap_storage[base].dist) { std::pop_heap(heap_storage.begin()+base, heap_storage.begin()+base+hs, cmp); heap_storage[base+hs-1] = Cand{distp, static_cast<std::uint32_t>(cj)}; std::push_heap(heap_storage.begin()+base, heap_storage.begin()+base+hs, cmp); }
-                        }
-                    }
-                }
-                // Process remaining rows (<16) with fallback
-                for (std::size_t i = ntiles; i < n; ++i) {
-                    const float* qp = qproj.data() + i * p;
-                    const float qi = qnorm[i];
-                    const std::size_t base = off[i];
-                    std::size_t& hs = heap_size[i];
-                    for (std::size_t jj = 0; jj < jb; ++jj) {
-                        const std::size_t cj = j0 + jj;
-                        const float* yc = proj_centroids_rm_.data() + cj * p;
-                        float dot = 0.0f; for (int k = 0; k < 16; ++k) dot += qp[k] * yc[k];
-                        const float distp = qi + proj_centroid_norms_[cj] - 2.0f * dot;
-                        if (hs < L) { heap_storage[base + hs++] = Cand{distp, static_cast<std::uint32_t>(cj)}; if (hs == L) std::make_heap(heap_storage.begin()+base, heap_storage.begin()+base+hs, cmp); }
-                        else if (distp < heap_storage[base].dist) { std::pop_heap(heap_storage.begin()+base, heap_storage.begin()+base+hs, cmp); heap_storage[base+hs-1] = Cand{distp, static_cast<std::uint32_t>(cj)}; std::push_heap(heap_storage.begin()+base, heap_storage.begin()+base+hs, cmp); }
-                    }
-                }
-            } else {
-                // Original per-query fallback path (any p)
-                #pragma omp parallel for schedule(static)
-                for (int ii = 0; ii < static_cast<int>(n); ++ii) {
-                    const std::size_t i = static_cast<std::size_t>(ii);
-                    const float* qp = qproj.data() + i * p;
-                    const float qi_norm = qnorm[i];
-                    const std::size_t base = off[i];
-                    std::size_t& hs = heap_size[i];
-                    for (std::size_t jj = 0; jj < jb; ++jj) {
-                        const std::size_t cj = j0 + jj;
-                        const float* yc = proj_centroids_rm_.data() + cj * p;
-                        float dot = 0.0f; for (std::size_t k = 0; k < p; ++k) dot += qp[k] * yc[k];
-                        const float distp = qi_norm + proj_centroid_norms_[cj] - 2.0f * dot;
-                        if (hs < L) { heap_storage[base + hs++] = Cand{distp, static_cast<std::uint32_t>(cj)}; if (hs == L) std::make_heap(heap_storage.begin()+base, heap_storage.begin()+base+hs, cmp); }
-                        else if (distp < heap_storage[base].dist) { std::pop_heap(heap_storage.begin()+base, heap_storage.begin()+base+hs, cmp); heap_storage[base+hs-1] = Cand{distp, static_cast<std::uint32_t>(cj)}; std::push_heap(heap_storage.begin()+base, heap_storage.begin()+base+hs, cmp); }
-                    }
-                }
-            }
-        }
-#endif // VESPER_HAS_CBLAS
-
-        // Exact refinement over candidates
+        // Exact refinement over candidates returned by screening helper
         for (std::size_t i = 0; i < n; ++i) {
             const float* qv = data + i * state_.dim;
-            const std::size_t base = off[i];
-            const std::size_t hs = heap_size[i];
             float bestd = std::numeric_limits<float>::infinity(); std::uint32_t bestc = 0u;
-            for (std::size_t t = 0; t < hs; ++t) {
-                const std::uint32_t cand = heap_storage[base + t].idx;
+            const std::size_t base = i * static_cast<std::size_t>(L);
+            for (std::size_t t = 0; t < static_cast<std::size_t>(L); ++t) {
+                const std::uint32_t cand = cand_idx[base + t];
                 const float d = ops.l2_sq(std::span(qv, state_.dim), state_.coarse_centroids.get_centroid(cand));
                 if (d < bestd) { bestd = d; bestc = cand; }
             }

@@ -126,6 +126,8 @@ set(VESPER_CORE_SOURCES
     src/metadata/metadata_store.cpp
     src/memory/numa_allocator.cpp
     )
+list(APPEND VESPER_CORE_SOURCES src/index/projection_assigner.cpp)
+
 # When fuzzing with Clang, exclude optional prefetch/async I/O modules and DiskANN/tombstone to simplify sanitizer build
 if (VESPER_ENABLE_FUZZ AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   list(REMOVE_ITEM VESPER_CORE_SOURCES src/io/prefetch_manager.cpp)
