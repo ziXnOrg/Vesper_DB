@@ -1,5 +1,11 @@
 # Build directories
 build/
+build-*/
+build-msvc/
+build-release/
+build-test/
+build-off/
+build-clang*/
 out/
 cmake-build-*/
 Build/
