@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <numeric>
+#include <limits>
 #include <vector>
 
 #ifdef VESPER_HAS_CBLAS
@@ -70,33 +71,42 @@ void projection_screen_select(const ProjScreenInputs& in, ProjScreenOutputs& out
             for (std::size_t r = 0; r < qb; ++r) {
                 const std::size_t i = i0 + r;
                 const float qi = in.qnorm[i];
-                // Build distances for this row
+                // Fixed-size block top-L selection (no nth_element)
+                std::uint32_t blk_idx[256];
+                float blk_dist[256];
+                std::size_t bsz = 0; int argmax = -1; float maxd = -std::numeric_limits<float>::infinity();
                 for (std::size_t jj = 0; jj < jb; ++jj) {
                     const std::size_t cj = j0 + jj;
                     const float dot = dots[r * jb + jj];
-                    dist_buf[jj] = qi + in.centroid_norms[cj] - 2.0f * dot;
+                    const float d = qi + in.centroid_norms[cj] - 2.0f * dot;
+                    if (bsz < lb) {
+                        blk_idx[bsz] = static_cast<std::uint32_t>(cj);
+                        blk_dist[bsz] = d;
+                        if (argmax < 0 || d > maxd) { argmax = static_cast<int>(bsz); maxd = d; }
+                        ++bsz;
+                    } else if (d < maxd) {
+                        blk_idx[argmax] = static_cast<std::uint32_t>(cj);
+                        blk_dist[argmax] = d;
+                        // recompute argmax
+                        argmax = 0; maxd = blk_dist[0];
+                        for (std::size_t t = 1; t < bsz; ++t) { if (blk_dist[t] > maxd) { maxd = blk_dist[t]; argmax = static_cast<int>(t); } }
+                    }
                 }
-                std::iota(idx_buf.begin(), idx_buf.end(), 0);
-                if (jb > lb) {
-                    std::nth_element(idx_buf.begin(), idx_buf.begin() + lb, idx_buf.end(),
-                        [&](int a, int b){ return dist_buf[a] < dist_buf[b]; });
-                }
-                // Merge block top-lb with curr top-L
+                // Merge block results into current top-L
                 const std::size_t base = row_base(i);
-                const std::size_t s1 = curr_size[i];
-                const std::size_t s2 = lb;
-                std::uint32_t tmp_idx[512];
-                float tmp_dist[512];
-                std::size_t tcount = 0;
-                for (std::size_t t = 0; t < s1; ++t) { tmp_idx[tcount] = curr_idx[base + t]; tmp_dist[tcount++] = curr_dist[base + t]; }
-                for (std::size_t t = 0; t < s2; ++t) { tmp_idx[tcount] = static_cast<std::uint32_t>(j0 + idx_buf[t]); tmp_dist[tcount++] = dist_buf[idx_buf[t]]; }
-                const std::size_t keep = std::min<std::size_t>(L, tcount);
-                std::vector<int> ord(tcount); std::iota(ord.begin(), ord.end(), 0);
-                std::nth_element(ord.begin(), ord.begin() + static_cast<long long>(keep), ord.end(),
-                    [&](int a, int b){ return tmp_dist[a] < tmp_dist[b]; });
-                for (std::size_t t = 0; t < keep; ++t) { curr_idx[base + t] = tmp_idx[ord[t]]; curr_dist[base + t] = tmp_dist[ord[t]]; }
-                curr_size[i] = keep;
-                total_block_candidates += s2;
+                for (std::size_t t = 0; t < bsz; ++t) {
+                    if (curr_size[i] < L) {
+                        curr_idx[base + curr_size[i]] = blk_idx[t];
+                        curr_dist[base + curr_size[i]] = blk_dist[t];
+                        ++curr_size[i];
+                    } else {
+                        // find current worst
+                        std::size_t w = 0; float wdist = curr_dist[base + 0];
+                        for (std::size_t u = 1; u < L; ++u) { if (curr_dist[base + u] > wdist) { w = u; wdist = curr_dist[base + u]; } }
+                        if (blk_dist[t] < wdist) { curr_idx[base + w] = blk_idx[t]; curr_dist[base + w] = blk_dist[t]; }
+                    }
+                }
+                total_block_candidates += bsz;
             }
             auto t_s1 = clock::now();
             select_ms_acc += std::chrono::duration<double, std::milli>(t_s1 - t_s0).count();
