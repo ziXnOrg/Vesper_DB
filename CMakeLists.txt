@@ -28,6 +28,9 @@ option(VESPER_SERIALIZE_BASE_LAYER "Serialize base-layer connection in HNSW (saf
 option(VESPER_PARTITIONED_BASE_LOCKS "Partitioned base-layer locking for HNSW inserts (experimental)" OFF)
 option(VESPER_EXPERIMENTAL_WORK_STEALING "Enable experimental per-worker deques with basic work-stealing in HNSW thread pool" OFF)
 
+# Optional CBLAS/BLAS for projection screening (disabled by default)
+option(VESPER_ENABLE_CBLAS "Enable CBLAS (OpenBLAS/MKL) for projection screening" OFF)
+
 # Configure OpenMP if requested
 if (VESPER_ENABLE_OPENMP)
   find_package(OpenMP)
@@ -78,6 +81,12 @@ if (VESPER_ENABLE_KERNEL_DISPATCH)
   add_compile_definitions(VESPER_ENABLE_KERNEL_DISPATCH=1)
 else()
   add_compile_definitions(VESPER_ENABLE_KERNEL_DISPATCH=0)
+# Use static runtime on Windows when fuzzing with Clang to match libFuzzer (MT)
+if (WIN32 AND VESPER_ENABLE_FUZZ AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  # CMake 3.15+: controls /MT vs /MD for MSVC-like toolchains
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
 endif()
 
 # Fetch CRoaring bitmap library early (needed by tombstone module)
@@ -89,7 +98,10 @@ FetchContent_Declare(
   GIT_TAG        v2.0.4
   CMAKE_ARGS -DENABLE_ROARING_TESTS=OFF
 )
-FetchContent_MakeAvailable(croaring)
+# Skip building CRoaring entirely for Clang+fuzz (we remove tombstone sources)
+if (NOT (VESPER_ENABLE_FUZZ AND CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND NOT MSVC))
+  FetchContent_MakeAvailable(croaring)
+endif()
 
 # Library (minimal in-memory impl) to prove linkage in CI
 set(VESPER_CORE_SOURCES
@@ -114,6 +126,17 @@ set(VESPER_CORE_SOURCES
     src/metadata/metadata_store.cpp
     src/memory/numa_allocator.cpp
     )
+# When fuzzing with Clang, exclude optional prefetch/async I/O modules and DiskANN/tombstone to simplify sanitizer build
+if (VESPER_ENABLE_FUZZ AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  list(REMOVE_ITEM VESPER_CORE_SOURCES src/io/prefetch_manager.cpp)
+  list(REMOVE_ITEM VESPER_CORE_SOURCES src/io/async_io.cpp)
+  list(REMOVE_ITEM VESPER_CORE_SOURCES src/index/disk_graph.cpp)
+  list(REMOVE_ITEM VESPER_CORE_SOURCES src/tombstone/tombstone_manager.cpp)
+  list(REMOVE_ITEM VESPER_CORE_SOURCES src/index/index_manager.cpp)
+  list(REMOVE_ITEM VESPER_CORE_SOURCES src/index/query_planner.cpp)
+  list(REMOVE_ITEM VESPER_CORE_SOURCES src/metadata/metadata_store.cpp)
+endif()
+
 
 # Add platform-specific sources
 # Windows reports AMD64, Linux/macOS report x86_64
@@ -138,6 +161,27 @@ add_library(vesper_core STATIC ${VESPER_CORE_SOURCES})
 target_link_libraries(vesper_core PRIVATE vesper_headers)
 if(TARGET roaring)
   target_link_libraries(vesper_core PUBLIC roaring)
+endif()
+
+# Optional BLAS linkage for projection screening
+if (VESPER_ENABLE_CBLAS)
+  # Define compile-time guard for CBLAS usage in code
+  target_compile_definitions(vesper_core PUBLIC VESPER_HAS_CBLAS=1)
+  # Try to find a BLAS implementation (OpenBLAS/MKL/Accelerate)
+  find_package(BLAS)
+  if (BLAS_FOUND)
+    message(STATUS "BLAS found; linking BLAS::BLAS")
+    target_link_libraries(vesper_core PUBLIC BLAS::BLAS)
+  else()
+    message(WARNING "VESPER_ENABLE_CBLAS=ON but BLAS not found; building without BLAS linkage")
+  endif()
+endif()
+
+# If fuzzing with Clang (GNU driver), compile core with ASan/UBSan so link is consistent
+if (VESPER_ENABLE_FUZZ AND CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND NOT MSVC)
+  target_compile_options(vesper_core PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+  target_link_options(vesper_core PRIVATE -fsanitize=address,undefined)
+  target_compile_definitions(vesper_core PUBLIC VESPER_NO_ROARING=1)
 endif()
 
 if (VESPER_WITH_ZSTD)
@@ -325,15 +369,59 @@ if (VESPER_ENABLE_BENCH)
 # ----------------------
 option(VESPER_ENABLE_FUZZ "Build fuzz targets" OFF)
 if (VESPER_ENABLE_FUZZ AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-  add_executable(wal_manifest_fuzz tests/fuzz/wal_manifest_fuzz.cpp)
-  target_link_libraries(wal_manifest_fuzz PRIVATE vesper_headers vesper_core vesper_wal)
-  target_compile_options(wal_manifest_fuzz PRIVATE -fsanitize=fuzzer,address,undefined -fno-omit-frame-pointer)
-  target_link_options(wal_manifest_fuzz PRIVATE -fsanitize=fuzzer,address,undefined)
+  if (MSVC)
+    # clang-cl path: use /fsanitize flags and link fuzzer runtime manually
+    # Ensure core also built with ASan/UBSan to avoid CRT/sanitizer mismatches
+    target_compile_definitions(vesper_core PRIVATE _DISABLE_STRING_ANNOTATION=1)
+    target_compile_options(vesper_core PRIVATE /fsanitize=address)
+    target_link_options(vesper_core PRIVATE /fsanitize=address)
 
-  add_executable(wal_frame_fuzz tests/fuzz/wal_frame_fuzz.cpp)
-  target_link_libraries(wal_frame_fuzz PRIVATE vesper_headers vesper_core vesper_wal)
-  target_compile_options(wal_frame_fuzz PRIVATE -fsanitize=fuzzer,address,undefined -fno-omit-frame-pointer)
-  target_link_options(wal_frame_fuzz PRIVATE -fsanitize=fuzzer,address,undefined)
+    add_executable(wal_manifest_fuzz tests/fuzz/wal_manifest_fuzz.cpp)
+    target_link_libraries(wal_manifest_fuzz PRIVATE vesper_headers vesper_core vesper_wal)
+    target_compile_definitions(wal_manifest_fuzz PRIVATE _DISABLE_STRING_ANNOTATION=1)
+    target_compile_options(wal_manifest_fuzz PRIVATE /fsanitize=address)
+    target_link_options(wal_manifest_fuzz PRIVATE /fsanitize=address)
+
+    add_executable(wal_frame_fuzz tests/fuzz/wal_frame_fuzz.cpp)
+    target_link_libraries(wal_frame_fuzz PRIVATE vesper_headers vesper_core vesper_wal)
+    target_compile_definitions(wal_frame_fuzz PRIVATE _DISABLE_STRING_ANNOTATION=1)
+    target_compile_options(wal_frame_fuzz PRIVATE /fsanitize=address)
+    target_link_options(wal_frame_fuzz PRIVATE /fsanitize=address)
+
+    # IVF-PQ v1.1 loader fuzz (metadata-bearing, multi-section corruptions)
+    add_executable(ivfpq_v11_fuzz tests/fuzz/ivfpq_v11_fuzz.cpp)
+    target_link_libraries(ivfpq_v11_fuzz PRIVATE vesper_headers vesper_core)
+    target_compile_definitions(ivfpq_v11_fuzz PRIVATE _DISABLE_STRING_ANNOTATION=1)
+    target_compile_options(ivfpq_v11_fuzz PRIVATE /fsanitize=address)
+    target_link_options(ivfpq_v11_fuzz PRIVATE /fsanitize=address)
+
+    # Locate libFuzzer runtime and link it explicitly (clang_rt.fuzzer-x86_64.lib)
+    execute_process(COMMAND ${CMAKE_CXX_COMPILER} --print-resource-dir
+                    OUTPUT_VARIABLE CLANG_RESOURCE_DIR OUTPUT_STRIP_TRAILING_WHITESPACE)
+    set(FUZZER_LIB "${CLANG_RESOURCE_DIR}/lib/windows/clang_rt.fuzzer-x86_64.lib")
+    if (EXISTS "${FUZZER_LIB}")
+      target_link_libraries(ivfpq_v11_fuzz PRIVATE "${FUZZER_LIB}")
+      target_link_libraries(wal_manifest_fuzz PRIVATE "${FUZZER_LIB}")
+      target_link_libraries(wal_frame_fuzz PRIVATE "${FUZZER_LIB}")
+    endif()
+  else()
+    # clang++ (GNU driver) path
+    add_executable(wal_manifest_fuzz tests/fuzz/wal_manifest_fuzz.cpp)
+    target_link_libraries(wal_manifest_fuzz PRIVATE vesper_headers vesper_core vesper_wal)
+    target_compile_options(wal_manifest_fuzz PRIVATE -fsanitize=fuzzer,address,undefined -fno-omit-frame-pointer)
+    target_link_options(wal_manifest_fuzz PRIVATE -fsanitize=fuzzer,address,undefined)
+
+    add_executable(wal_frame_fuzz tests/fuzz/wal_frame_fuzz.cpp)
+    target_link_libraries(wal_frame_fuzz PRIVATE vesper_headers vesper_core vesper_wal)
+    target_compile_options(wal_frame_fuzz PRIVATE -fsanitize=fuzzer,address,undefined -fno-omit-frame-pointer)
+    target_link_options(wal_frame_fuzz PRIVATE -fsanitize=fuzzer,address,undefined)
+
+    # IVF-PQ v1.1 loader fuzz (metadata-bearing, multi-section corruptions)
+    add_executable(ivfpq_v11_fuzz tests/fuzz/ivfpq_v11_fuzz.cpp)
+    target_link_libraries(ivfpq_v11_fuzz PRIVATE vesper_headers vesper_core)
+    target_compile_options(ivfpq_v11_fuzz PRIVATE -fsanitize=fuzzer,address,undefined -fno-omit-frame-pointer)
+    target_link_options(ivfpq_v11_fuzz PRIVATE -fsanitize=fuzzer,address,undefined)
+  endif()
 endif()
   FetchContent_MakeAvailable(gbench)
 
@@ -482,6 +570,11 @@ endif()
   target_link_libraries(ivfpq_v11_metadata_test PRIVATE Catch2::Catch2WithMain vesper_headers vesper_core Threads::Threads)
   target_include_directories(ivfpq_v11_metadata_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
   catch_discover_tests(ivfpq_v11_metadata_test)
+  add_executable(ivfpq_v11_metadata_limits_test tests/integration/ivfpq_v11_metadata_limits_test.cpp)
+  target_link_libraries(ivfpq_v11_metadata_limits_test PRIVATE Catch2::Catch2WithMain vesper_headers vesper_core Threads::Threads)
+  target_include_directories(ivfpq_v11_metadata_limits_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  catch_discover_tests(ivfpq_v11_metadata_limits_test)
+
 
   add_executable(ivfpq_fuzz_robust_test tests/integration/ivfpq_fuzz_robust_test.cpp)
   target_link_libraries(ivfpq_fuzz_robust_test PRIVATE Catch2::Catch2WithMain vesper_headers vesper_core Threads::Threads)
@@ -534,4 +627,7 @@ else()
   target_link_libraries(ivfpq_persist_bench PRIVATE vesper_headers vesper_core Threads::Threads)
 endif()
 
+# add() throughput micro-bench for Task 18 acceptance
+add_executable(ivfpq_add_bench tools/ivfpq_add_bench.cpp)
+target_link_libraries(ivfpq_add_bench PRIVATE vesper_headers vesper_core Threads::Threads)
 

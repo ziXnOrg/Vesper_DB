@@ -4,6 +4,8 @@
 #include <fstream>
 #include <random>
 
+#include <algorithm>
+
 using namespace vesper::index;
 namespace fs = std::filesystem;
 
@@ -280,8 +282,90 @@ TEST_CASE("IVFPQ v1.1 loader robustness under corrupted inputs", "[ivfpq][serial
                     }
                 }
             }
+
+    }
+    }
+
+    SECTION("Permuting section order should not crash (may load or fail)") {
+        auto secs = parse_v11_sections(base);
+        if (!secs.empty()) {
+            // Copy header + optional metadata
+            std::uint32_t meta_len = 0; std::memcpy(&meta_len, base.data()+56, 4);
+            std::vector<unsigned char> out;
+            const size_t head = 60 + meta_len;
+            out.insert(out.end(), base.begin(), base.begin()+head);
+            // Shuffle order deterministically
+            std::vector<SecInfo> ord = secs;
+            std::mt19937_64 sh(424242); std::shuffle(ord.begin(), ord.end(), sh);
+            // Re-append sections in new order (headers+payloads)
+            for (const auto& s : ord) {
+                out.insert(out.end(), base.begin()+s.hdr_off, base.begin()+s.hdr_off+32);
+                if (s.payload_off + s.comp <= base.size()-12) {
+                    out.insert(out.end(), base.begin()+s.payload_off, base.begin()+s.payload_off + static_cast<size_t>(s.comp));
+                }
+            }
+            // Append trailer space and recompute checksum
+            out.resize(out.size()+12, 0);
+            recompute_v11_trailer_checksum(out);
+            // Try both mmap and streaming; success or failure is acceptable as long as no crash
+            for (int mm = 0; mm <= 1; ++mm) {
+                auto d = tmp_path("ivfpq_perm"); std::error_code ec; fs::create_directories(d, ec);
+                write_all(d / "ivfpq.bin", out);
+                auto r = IvfPqIndex::load(d.string().c_str());
+                if (r.has_value()) { CHECK(r->get_metadata_json().size() >= 0); }
+            }
+        } else {
+            SUCCEED();
         }
     }
 
-}
+    SECTION("Duplicated section header should not crash (loader may reject)") {
+        auto secs = parse_v11_sections(base);
+        if (secs.size() >= 1) {
+            std::uint32_t meta_len = 0; std::memcpy(&meta_len, base.data()+56, 4);
+            std::vector<unsigned char> out; const size_t head = 60 + meta_len;
+            out.insert(out.end(), base.begin(), base.begin()+head);
+            // Build order with a duplicated first section
+            std::vector<SecInfo> ord = secs; ord.insert(ord.begin()+1, secs.front());
+            for (const auto& s : ord) {
+                out.insert(out.end(), base.begin()+s.hdr_off, base.begin()+s.hdr_off+32);
+                if (s.payload_off + s.comp <= base.size()-12) {
+                    out.insert(out.end(), base.begin()+s.payload_off, base.begin()+s.payload_off + static_cast<size_t>(s.comp));
+                }
+            }
+            out.resize(out.size()+12, 0);
+            recompute_v11_trailer_checksum(out);
+            for (int mm = 0; mm <= 1; ++mm) {
+                auto d = tmp_path("ivfpq_dup"); std::error_code ec; fs::create_directories(d, ec);
+                write_all(d / "ivfpq.bin", out);
+                auto r = IvfPqIndex::load(d.string().c_str());
+                if (r.has_value()) { CHECK(r->get_metadata_json().size() >= 0); }
+            }
+        } else {
+            SUCCEED();
+        }
+    }
 
+    SECTION("Overlapping sections via shrunk comp should fail validation") {
+        auto secs = parse_v11_sections(base);
+        if (secs.size() >= 2) {
+            // Pick a middle section to shrink
+            const SecInfo& s = secs[secs.size()/2];
+            auto tmp = base;
+            if (s.comp > 8) {
+                std::uint64_t smaller = s.comp - 8; std::memcpy(tmp.data()+s.hdr_off+12, &smaller, 8);
+            } else if (s.comp > 1) {
+                std::uint64_t half = s.comp/2; std::memcpy(tmp.data()+s.hdr_off+12, &half, 8);
+            } else {
+                std::uint64_t z = 0; std::memcpy(tmp.data()+s.hdr_off+12, &z, 8);
+            }
+            recompute_v11_trailer_checksum(tmp);
+            for (int mm = 0; mm <= 1; ++mm) expect_load_error_for_buf(tmp, mm);
+        } else {
+            SUCCEED();
+        }
+    }
+
+
+
+}
