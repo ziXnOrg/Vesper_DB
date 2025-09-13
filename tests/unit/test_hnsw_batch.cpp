@@ -8,17 +8,18 @@
 #include <string>
 #include <cctype>
 #include "vesper/index/hnsw.hpp"
+#include "vesper/core/platform_utils.hpp"
 
 static inline std::uint32_t getenv_u32(const char* key, std::uint32_t fallback) {
-    if (const char* v = std::getenv(key)) {
-        try { return static_cast<std::uint32_t>(std::stoul(v)); } catch (...) { }
+    if (auto v = vesper::core::safe_getenv(key)) {
+        try { return static_cast<std::uint32_t>(std::stoul(*v)); } catch (...) { }
     }
     return fallback;
 }
 
 static inline bool getenv_bool(const char* key, bool fallback) {
-    if (const char* v = std::getenv(key)) {
-        std::string s(v); for (auto& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (auto v = vesper::core::safe_getenv(key)) {
+        std::string s(*v); for (auto& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
         if (s == "1" || s == "true" || s == "yes" || s == "on") return true;
         if (s == "0" || s == "false" || s == "no" || s == "off") return false;
     }

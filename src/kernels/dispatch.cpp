@@ -1,5 +1,6 @@
 #include "vesper/kernels/dispatch.hpp"
 #include "vesper/kernels/backends/scalar.hpp"
+#include "vesper/core/platform_utils.hpp"
 
 #if defined(__x86_64__) || defined(_M_X64) || defined(_M_AMD64)
 #ifdef _MSC_VER
@@ -76,7 +77,7 @@ inline auto detect_cpu_features() noexcept -> CpuFeatures {
     int cpu_info[4];
     __cpuid(cpu_info, 0);
     const unsigned int max_level = cpu_info[0];
-    
+
     // Check for AVX2 (CPUID.07H:EBX.AVX2[bit 5])
     if (max_level >= 7) {
         __cpuidex(cpu_info, 7, 0);
@@ -84,7 +85,7 @@ inline auto detect_cpu_features() noexcept -> CpuFeatures {
         // Check for AVX-512F (CPUID.07H:EBX.AVX512F[bit 16])
         features.has_avx512f = (cpu_info[1] & (1u << 16)) != 0;
     }
-    
+
     // Check for FMA (CPUID.01H:ECX.FMA[bit 12])
     __cpuid(cpu_info, 1);
     features.has_fma = (cpu_info[2] & (1u << 12)) != 0;
@@ -145,10 +146,10 @@ static inline const KernelOps& get_accelerate_ops() noexcept {
  * Useful for testing and debugging.
  */
 inline auto get_simd_override() noexcept -> std::string_view {
-    static const char* env = std::getenv("VESPER_SIMD_MASK");
-    if (env && env[0]) {
+    static const auto env = vesper::core::safe_getenv("VESPER_SIMD_MASK");
+    if (env && !env->empty()) {
         // Parse mask: 0=force scalar, 1=allow AVX2, 2=allow AVX512
-        const int mask = std::atoi(env);
+        const int mask = std::atoi(env->c_str());
         if (mask == 0) return "scalar";
         if (mask == 1) return "avx2";
         if (mask == 2) return "avx512";
@@ -164,8 +165,8 @@ inline auto get_simd_override() noexcept -> std::string_view {
  * - "auto" or unknown values are ignored (no override).
  */
 inline auto get_backend_name_override() noexcept -> std::string_view {
-    static const char* env = std::getenv("VESPER_KERNEL_BACKEND");
-    if (!env || !env[0]) return "";
+    static const auto env = vesper::core::safe_getenv("VESPER_KERNEL_BACKEND");
+    if (!env || env->empty()) return "";
     auto eq_ci = [](std::string_view a, std::string_view b) {
         if (a.size() != b.size()) return false;
         for (std::size_t i = 0; i < a.size(); ++i) {
@@ -176,7 +177,7 @@ inline auto get_backend_name_override() noexcept -> std::string_view {
         }
         return true;
     };
-    const std::string_view s{env};
+    const std::string_view s{*env};
     if (eq_ci(s, "scalar"))      return "scalar";
     if (eq_ci(s, "avx2"))        return "avx2";
     if (eq_ci(s, "avx512"))      return "avx512";

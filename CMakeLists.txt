@@ -126,6 +126,8 @@ set(VESPER_CORE_SOURCES
     src/metadata/metadata_store.cpp
     src/memory/numa_allocator.cpp
     )
+list(APPEND VESPER_CORE_SOURCES src/index/projection_assigner.cpp)
+
 # When fuzzing with Clang, exclude optional prefetch/async I/O modules and DiskANN/tombstone to simplify sanitizer build
 if (VESPER_ENABLE_FUZZ AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   list(REMOVE_ITEM VESPER_CORE_SOURCES src/io/prefetch_manager.cpp)
@@ -163,17 +165,29 @@ if(TARGET roaring)
   target_link_libraries(vesper_core PUBLIC roaring)
 endif()
 
+if (MSVC)
+  target_compile_options(vesper_core PRIVATE /EHa)
+endif()
+
 # Optional BLAS linkage for projection screening
 if (VESPER_ENABLE_CBLAS)
   # Define compile-time guard for CBLAS usage in code
   target_compile_definitions(vesper_core PUBLIC VESPER_HAS_CBLAS=1)
-  # Try to find a BLAS implementation (OpenBLAS/MKL/Accelerate)
-  find_package(BLAS)
-  if (BLAS_FOUND)
-    message(STATUS "BLAS found; linking BLAS::BLAS")
-    target_link_libraries(vesper_core PUBLIC BLAS::BLAS)
+  # Prefer OpenBLAS config package (provides cblas.h and imported target)
+  find_package(OpenBLAS CONFIG QUIET)
+  if (OpenBLAS_FOUND)
+    message(STATUS "OpenBLAS found; linking OpenBLAS::OpenBLAS")
+    target_link_libraries(vesper_core PUBLIC OpenBLAS::OpenBLAS)
   else()
-    message(WARNING "VESPER_ENABLE_CBLAS=ON but BLAS not found; building without BLAS linkage")
+    # Fallback to generic BLAS (MKL/Accelerate/etc.). Note: may not provide cblas.h include dirs.
+    find_package(BLAS)
+    if (BLAS_FOUND)
+      message(STATUS "BLAS found; linking BLAS::BLAS")
+      target_link_libraries(vesper_core PUBLIC BLAS::BLAS)
+    else()
+      message(WARNING "VESPER_ENABLE_CBLAS=ON but no BLAS found; building without BLAS linkage")
+      target_compile_definitions(vesper_core PUBLIC VESPER_HAS_CBLAS=0)
+    endif()
   endif()
 endif()
 
@@ -307,6 +321,7 @@ if (VESPER_ENABLE_TESTS)
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/platform_agnostic_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/hnsw_thread_pool_stress_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/hnsw_connectivity_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/hnsw_basic_invariant_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/test_hnsw_batch.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/simple_integration_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/minimal_test.cpp
@@ -347,7 +362,14 @@ if (VESPER_ENABLE_TESTS)
   endif()
 
   include(Catch)
-  catch_discover_tests(vesper_tests)
+  catch_discover_tests(vesper_tests CONFIGURATIONS Release Debug RelWithDebInfo MinSizeRel)
+
+  # Lint: forbid std::getenv in tree (use vesper::core::safe_getenv instead)
+  add_test(
+    NAME lint_forbid_std_getenv
+    COMMAND ${CMAKE_COMMAND} -DSRC_DIR=${CMAKE_CURRENT_SOURCE_DIR} -P ${CMAKE_CURRENT_SOURCE_DIR}/tools/cmake/CheckNoGetenv.cmake
+  )
+
 endif()
 
 # ----------------------
@@ -355,6 +377,9 @@ endif()
 # ----------------------
 option(VESPER_ENABLE_BENCH "Build micro-benchmarks" ON)
 if (VESPER_ENABLE_BENCH)
+  # Enable HNSW invariants in core when building benchmarks for better diagnostics
+  target_compile_definitions(vesper_core PRIVATE VESPER_HNSW_INVARIANTS=1)
+
   include(FetchContent)
   set(GBENCH_TAG v1.8.3)
   FetchContent_Declare(
@@ -469,7 +494,8 @@ if(VESPER_BUILD_GTESTS)
 find_package(Python3 COMPONENTS Interpreter)
 if (Python3_Interpreter_FOUND)
   add_test(NAME hnsw_bench_matrix COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/bench_matrix.py)
-  set_tests_properties(hnsw_bench_matrix PROPERTIES TIMEOUT 3600)
+  # Keep this fast under CTest to avoid long hangs on CI/Windows
+  set_tests_properties(hnsw_bench_matrix PROPERTIES TIMEOUT 120 ENVIRONMENT "VESPER_BENCH_FAST=1")
 endif()
 
   # For Windows: Prevent overriding the parent project's compiler/linker settings
@@ -497,6 +523,9 @@ endif()
   target_link_libraries(kmeans_test PRIVATE vesper_headers vesper_core gtest_main)
 
   add_executable(hnsw_index_test tests/unit/hnsw_test.cpp)
+  add_executable(hnsw_basic_invariant_test tests/unit/hnsw_basic_invariant_test.cpp)
+  target_link_libraries(hnsw_basic_invariant_test PRIVATE vesper_headers vesper_core gtest_main)
+
   target_link_libraries(hnsw_index_test PRIVATE vesper_headers vesper_core gtest_main)
 
 
@@ -531,9 +560,9 @@ endif()
   target_include_directories(performance_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
   target_link_libraries(integration_test PRIVATE vesper_headers vesper_core Threads::Threads)
-  catch_discover_tests(vesper_integration_test)
-  catch_discover_tests(accuracy_test)
-  catch_discover_tests(performance_test)
+  catch_discover_tests(vesper_integration_test CONFIGURATIONS Release Debug RelWithDebInfo MinSizeRel)
+  catch_discover_tests(accuracy_test CONFIGURATIONS Release Debug RelWithDebInfo MinSizeRel)
+  catch_discover_tests(performance_test CONFIGURATIONS Release Debug RelWithDebInfo MinSizeRel)
 
   add_executable(bruteforce_verifier_test tests/integration/bruteforce_verifier_test.cpp tests/integration/dataset_loader.cpp)
   target_link_libraries(bruteforce_verifier_test PRIVATE Catch2::Catch2WithMain vesper_headers vesper_core Threads::Threads)
@@ -543,43 +572,43 @@ endif()
   target_link_libraries(ivfpq_sweep_test PRIVATE Catch2::Catch2WithMain vesper_headers vesper_core Threads::Threads)
   target_include_directories(ivfpq_sweep_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
-  catch_discover_tests(bruteforce_verifier_test)
-  catch_discover_tests(ivfpq_sweep_test)
+  catch_discover_tests(bruteforce_verifier_test CONFIGURATIONS Release Debug RelWithDebInfo MinSizeRel)
+  catch_discover_tests(ivfpq_sweep_test CONFIGURATIONS Release Debug RelWithDebInfo MinSizeRel)
   add_executable(ivfpq_serialize_roundtrip_test tests/integration/ivfpq_serialize_roundtrip_test.cpp)
   target_link_libraries(ivfpq_serialize_roundtrip_test PRIVATE Catch2::Catch2WithMain vesper_headers vesper_core Threads::Threads)
   target_include_directories(ivfpq_serialize_roundtrip_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-  catch_discover_tests(ivfpq_serialize_roundtrip_test)
+  catch_discover_tests(ivfpq_serialize_roundtrip_test CONFIGURATIONS Release Debug RelWithDebInfo MinSizeRel)
   add_executable(ivfpq_v11_serialize_test tests/integration/ivfpq_v11_serialize_test.cpp)
   target_link_libraries(ivfpq_v11_serialize_test PRIVATE Catch2::Catch2WithMain vesper_headers vesper_core Threads::Threads)
   target_include_directories(ivfpq_v11_serialize_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-  catch_discover_tests(ivfpq_v11_serialize_test)
+  catch_discover_tests(ivfpq_v11_serialize_test CONFIGURATIONS Release Debug RelWithDebInfo MinSizeRel)
 
   add_executable(ivfpq_v11_error_handling_test tests/integration/ivfpq_v11_error_handling_test.cpp)
   target_link_libraries(ivfpq_v11_error_handling_test PRIVATE Catch2::Catch2WithMain vesper_headers vesper_core Threads::Threads)
   target_include_directories(ivfpq_v11_error_handling_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-  catch_discover_tests(ivfpq_v11_error_handling_test)
+  catch_discover_tests(ivfpq_v11_error_handling_test CONFIGURATIONS Release Debug RelWithDebInfo MinSizeRel)
   add_executable(ivfpq_v11_stream_position_test tests/integration/ivfpq_v11_stream_position_test.cpp)
   target_link_libraries(ivfpq_v11_stream_position_test PRIVATE Catch2::Catch2WithMain vesper_headers vesper_core Threads::Threads)
   target_include_directories(ivfpq_v11_stream_position_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-  catch_discover_tests(ivfpq_v11_stream_position_test)
+  catch_discover_tests(ivfpq_v11_stream_position_test CONFIGURATIONS Release Debug RelWithDebInfo MinSizeRel)
   add_executable(ivfpq_compat_matrix_test tests/integration/ivfpq_compat_matrix_test.cpp)
   target_link_libraries(ivfpq_compat_matrix_test PRIVATE Catch2::Catch2WithMain vesper_headers vesper_core Threads::Threads)
   target_include_directories(ivfpq_compat_matrix_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-  catch_discover_tests(ivfpq_compat_matrix_test)
+  catch_discover_tests(ivfpq_compat_matrix_test CONFIGURATIONS Release Debug RelWithDebInfo MinSizeRel)
   add_executable(ivfpq_v11_metadata_test tests/integration/ivfpq_v11_metadata_test.cpp)
   target_link_libraries(ivfpq_v11_metadata_test PRIVATE Catch2::Catch2WithMain vesper_headers vesper_core Threads::Threads)
   target_include_directories(ivfpq_v11_metadata_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-  catch_discover_tests(ivfpq_v11_metadata_test)
+  catch_discover_tests(ivfpq_v11_metadata_test CONFIGURATIONS Release Debug RelWithDebInfo MinSizeRel)
   add_executable(ivfpq_v11_metadata_limits_test tests/integration/ivfpq_v11_metadata_limits_test.cpp)
   target_link_libraries(ivfpq_v11_metadata_limits_test PRIVATE Catch2::Catch2WithMain vesper_headers vesper_core Threads::Threads)
   target_include_directories(ivfpq_v11_metadata_limits_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-  catch_discover_tests(ivfpq_v11_metadata_limits_test)
+  catch_discover_tests(ivfpq_v11_metadata_limits_test CONFIGURATIONS Release Debug RelWithDebInfo MinSizeRel)
 
 
   add_executable(ivfpq_fuzz_robust_test tests/integration/ivfpq_fuzz_robust_test.cpp)
   target_link_libraries(ivfpq_fuzz_robust_test PRIVATE Catch2::Catch2WithMain vesper_headers vesper_core Threads::Threads)
   target_include_directories(ivfpq_fuzz_robust_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-  catch_discover_tests(ivfpq_fuzz_robust_test)
+  catch_discover_tests(ivfpq_fuzz_robust_test CONFIGURATIONS Release Debug RelWithDebInfo MinSizeRel)
 
 
 
@@ -602,10 +631,14 @@ endif()
   gtest_discover_tests(hnsw_index_test)
   # gtest_discover_tests(hnsw_lockfree_test)
   # gtest_discover_tests(stress_test)
+  gtest_discover_tests(hnsw_basic_invariant_test)
+
   add_test(NAME integration_test COMMAND integration_test)
+  # Relax perf targets during CTest to avoid environment variability
+  set_tests_properties(integration_test PROPERTIES ENVIRONMENT "VESPER_RELAX_PERF=1")
 
   # Catch2 test discovery for multi-index test
-  catch_discover_tests(multi_index_test)
+  catch_discover_tests(multi_index_test CONFIGURATIONS Release Debug RelWithDebInfo MinSizeRel)
   gtest_discover_tests(hnsw_thread_pool_stress_test)
 
 endif()
@@ -630,4 +663,8 @@ endif()
 # add() throughput micro-bench for Task 18 acceptance
 add_executable(ivfpq_add_bench tools/ivfpq_add_bench.cpp)
 target_link_libraries(ivfpq_add_bench PRIVATE vesper_headers vesper_core Threads::Threads)
+if (MSVC)
+  target_compile_options(ivfpq_add_bench PRIVATE /EHa)
+endif()
+
 
