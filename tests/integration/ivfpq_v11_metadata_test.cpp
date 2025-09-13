@@ -1,5 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <vesper/index/ivf_pq.hpp>
+#include "vesper/core/platform_utils.hpp"
+
 #include <filesystem>
 #include <fstream>
 #include <random>
@@ -65,8 +67,8 @@ TEST_CASE("IVFPQ v1.1 metadata JSON roundtrip and size limits", "[ivfpq][seriali
     setenv("VESPER_IVFPQ_LOAD_MMAP", "0", 1);
 #endif
 
-    // Size limit enforcement: >1 MiB should be rejected at save
-    std::string big(1024 * 1024 + 1, 'x');
+    // Size limit enforcement: >64 KiB should be rejected at save
+    std::string big(64 * 1024 + 1, 'x');
     IvfPqIndex idx_big;
     IvfPqTrainParams t2{}; t2.nlist = 4; t2.m = 2; t2.nbits = 8; t2.use_opq = false;
     std::vector<float> small_train(64 * 8, 0.0f);
@@ -78,7 +80,7 @@ TEST_CASE("IVFPQ v1.1 metadata JSON roundtrip and size limits", "[ivfpq][seriali
 }
 
 TEST_CASE("IVFPQ v1.1 metadata fallback from fixed header when no section present (opt-in)", "[ivfpq][serialize][metadata][optional]") {
-    if (std::getenv("VESPER_TEST_HEADER_META") == nullptr) {
+    if (!vesper::core::safe_getenv("VESPER_TEST_HEADER_META")) {
         SUCCEED("skipped: set VESPER_TEST_HEADER_META=1 to run");
         return;
     }

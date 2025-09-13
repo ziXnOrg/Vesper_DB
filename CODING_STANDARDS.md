@@ -61,6 +61,13 @@ This guide sets enforceable, modern C++20 standards for Vesper. Use MUST/SHOULD/
 - pmr arena scratch usage
 - SIMD dispatch pattern with scalar fallback
 
+
+## Environment variables
+- MUST use `vesper::core::safe_getenv(const char*) -> std::optional<std::string>` instead of `std::getenv`.
+  - Rationale: eliminates MSVC C4996 warnings, avoids unsafe lifetime of returned pointers, and provides explicit "unset vs empty" semantics.
+  - If you need a boolean/toggle: prefer checking `env && !env->empty() && ((*env)[0] == '1')`.
+  - If you need a number: parse from `env->c_str()` with robust error handling (e.g., `strtoul`/`stoll` and guard ranges).
+
 ## Enforcement
 - `.clang-format` and `.clang-tidy` are authoritative. Violations block PRs.
 - Local run: `clang-format -i` and `clang-tidy` per `docs/SETUP.md`.

@@ -17,6 +17,7 @@ namespace vesper::index {
 #include "vesper/kernels/batch_distances.hpp"
 #include "vesper/core/memory_pool.hpp"
 #include "vesper/core/cpu_features.hpp"
+#include "vesper/core/platform_utils.hpp"
 
 #if defined(__x86_64__) || defined(_M_X64) || defined(_M_AMD64)
 #include <immintrin.h>
@@ -247,6 +248,12 @@ public:
     int kd_root_{-1};
     std::uint32_t kd_leaf_size_{256};
     std::vector<float> kd_proj_P_; // PCA rows (p=8) row-major size = 8*dim, orthonormal rows
+
+
+    // Packed leaf centroid panels for 128-D fast path (SoA panels per leaf)
+    std::vector<float> kd_leaf_panels_;
+    std::vector<std::uint64_t> kd_leaf_panel_offset_; // offset (in floats) into kd_leaf_panels_
+    std::vector<std::uint32_t> kd_leaf_panel_blocks_; // number of 16-centroid blocks per leaf
 
     // Projection-based coarse assignment state (when coarse_assigner==Projection)
     std::uint32_t proj_dim_{16};                 // effective projection dim
@@ -494,8 +501,8 @@ auto IvfPqIndex::Impl::train_coarse_quantizer(const float* data, std::size_t n, 
 
 void IvfPqIndex::Impl::kd_build_() {
     // Optional env override for leaf size and allow quick sweeps externally
-    if (const char* v = std::getenv("VESPER_KD_LEAF_SIZE")) {
-        const unsigned s = static_cast<unsigned>(std::strtoul(v, nullptr, 10));
+    if (auto v = vesper::core::safe_getenv("VESPER_KD_LEAF_SIZE")) {
+        const unsigned s = static_cast<unsigned>(std::strtoul(v->c_str(), nullptr, 10));
         if (s >= 16 && s <= 1024) kd_leaf_size_ = static_cast<std::uint32_t>(s);
     }
 
@@ -672,6 +679,46 @@ void IvfPqIndex::Impl::kd_build_() {
     for (std::uint32_t i = 0; i < state_.params.nlist; ++i) {
         std::memcpy(kd_leaf_centroids_[i], state_.coarse_centroids[kd_order_[i]], sizeof(float) * dim);
     }
+
+    // Prepack 128D leaf centroids into 16-wide SoA panels for AVX2 kernels
+    kd_leaf_panels_.clear();
+    kd_leaf_panel_offset_.assign(kd_nodes_.size(), 0);
+    kd_leaf_panel_blocks_.assign(kd_nodes_.size(), 0);
+    if (dim == 128) {
+        std::size_t total_floats = 0;
+        for (std::size_t u = 0; u < kd_nodes_.size(); ++u) {
+            const KDNode& nd = kd_nodes_[u];
+            if (!nd.leaf) continue;
+            const std::uint32_t L = nd.end - nd.begin;
+            const std::uint32_t blocks = L / 16u;
+            if (blocks == 0) continue;
+            total_floats += static_cast<std::size_t>(blocks) * 128u * 16u; // 2048 floats per block
+        }
+        kd_leaf_panels_.resize(total_floats);
+        std::size_t off = 0;
+        for (std::size_t u = 0; u < kd_nodes_.size(); ++u) {
+            const KDNode& nd = kd_nodes_[u];
+            if (!nd.leaf) continue;
+            const std::uint32_t L = nd.end - nd.begin;
+            const std::uint32_t blocks = L / 16u;
+            if (blocks == 0) continue;
+            kd_leaf_panel_offset_[u] = static_cast<std::uint64_t>(off);
+            kd_leaf_panel_blocks_[u] = blocks;
+            for (std::uint32_t b = 0; b < blocks; ++b) {
+                float* panel = kd_leaf_panels_.data() + off;
+                for (int b8 = 0; b8 < 16; ++b8) {
+                    for (int lane = 0; lane < 16; ++lane) {
+                        const std::uint32_t idx = nd.begin + b * 16u + static_cast<std::uint32_t>(lane);
+                        const float* src = kd_leaf_centroids_[idx] + b8 * 8;
+                        std::memcpy(panel + (static_cast<std::size_t>(b8) * 16 + static_cast<std::size_t>(lane)) * 8,
+                                    src, sizeof(float) * 8);
+                    }
+                }
+                off += 128u * 16u;
+            }
+        }
+    }
+
 }
 
 
@@ -791,6 +838,36 @@ inline float l2_128_scalar(const float* a, const float* b) noexcept {
 }
 
 #ifdef __AVX512F__
+
+#ifdef __AVX2__
+inline void l2_128x8_avx2_panel(const float* q, const float* panel_ptr, int lane_offset, float out[8]) noexcept {
+    __m256 acc0=_mm256_setzero_ps(), acc1=_mm256_setzero_ps(), acc2=_mm256_setzero_ps(), acc3=_mm256_setzero_ps();
+    __m256 acc4=_mm256_setzero_ps(), acc5=_mm256_setzero_ps(), acc6=_mm256_setzero_ps(), acc7=_mm256_setzero_ps();
+    for (int b8=0; b8<16; ++b8) {
+        const float* qblk = q + b8*8;
+        __m256 qv = _mm256_loadu_ps(qblk);
+        const std::size_t base = static_cast<std::size_t>(b8)*16 + static_cast<std::size_t>(lane_offset);
+        __m256 d0=_mm256_sub_ps(qv, _mm256_loadu_ps(panel_ptr + (base + 0)*8)); acc0=_mm256_fmadd_ps(d0,d0,acc0);
+        __m256 d1=_mm256_sub_ps(qv, _mm256_loadu_ps(panel_ptr + (base + 1)*8)); acc1=_mm256_fmadd_ps(d1,d1,acc1);
+        __m256 d2=_mm256_sub_ps(qv, _mm256_loadu_ps(panel_ptr + (base + 2)*8)); acc2=_mm256_fmadd_ps(d2,d2,acc2);
+        __m256 d3=_mm256_sub_ps(qv, _mm256_loadu_ps(panel_ptr + (base + 3)*8)); acc3=_mm256_fmadd_ps(d3,d3,acc3);
+        __m256 d4=_mm256_sub_ps(qv, _mm256_loadu_ps(panel_ptr + (base + 4)*8)); acc4=_mm256_fmadd_ps(d4,d4,acc4);
+        __m256 d5=_mm256_sub_ps(qv, _mm256_loadu_ps(panel_ptr + (base + 5)*8)); acc5=_mm256_fmadd_ps(d5,d5,acc5);
+        __m256 d6=_mm256_sub_ps(qv, _mm256_loadu_ps(panel_ptr + (base + 6)*8)); acc6=_mm256_fmadd_ps(d6,d6,acc6);
+        __m256 d7=_mm256_sub_ps(qv, _mm256_loadu_ps(panel_ptr + (base + 7)*8)); acc7=_mm256_fmadd_ps(d7,d7,acc7);
+    }
+    alignas(32) float tmp[8];
+    _mm256_store_ps(tmp, acc0); out[0]=tmp[0]+tmp[1]+tmp[2]+tmp[3]+tmp[4]+tmp[5]+tmp[6]+tmp[7];
+    _mm256_store_ps(tmp, acc1); out[1]=tmp[0]+tmp[1]+tmp[2]+tmp[3]+tmp[4]+tmp[5]+tmp[6]+tmp[7];
+    _mm256_store_ps(tmp, acc2); out[2]=tmp[0]+tmp[1]+tmp[2]+tmp[3]+tmp[4]+tmp[5]+tmp[6]+tmp[7];
+    _mm256_store_ps(tmp, acc3); out[3]=tmp[0]+tmp[1]+tmp[2]+tmp[3]+tmp[4]+tmp[5]+tmp[6]+tmp[7];
+    _mm256_store_ps(tmp, acc4); out[4]=tmp[0]+tmp[1]+tmp[2]+tmp[3]+tmp[4]+tmp[5]+tmp[6]+tmp[7];
+    _mm256_store_ps(tmp, acc5); out[5]=tmp[0]+tmp[1]+tmp[2]+tmp[3]+tmp[4]+tmp[5]+tmp[6]+tmp[7];
+    _mm256_store_ps(tmp, acc6); out[6]=tmp[0]+tmp[1]+tmp[2]+tmp[3]+tmp[4]+tmp[5]+tmp[6]+tmp[7];
+    _mm256_store_ps(tmp, acc7); out[7]=tmp[0]+tmp[1]+tmp[2]+tmp[3]+tmp[4]+tmp[5]+tmp[6]+tmp[7];
+}
+#endif
+
 inline float l2_128_avx512(const float* a, const float* b) noexcept {
     __m512 acc = _mm512_setzero_ps();
     for (int i=0;i<128;i+=16){
@@ -824,6 +901,36 @@ inline float l2_128_avx2(const float* a, const float* b) noexcept {
     alignas(32) float tmp[8]; _mm256_store_ps(tmp, acc0);
     float s=0.0f; for (int i=0;i<8;++i) s+=tmp[i];
     return s;
+}
+#endif
+
+
+#ifdef __AVX2__
+inline void l2_128x8_avx2_panel(const float* q, const float* panel_ptr, int lane_offset, float out[8]) noexcept {
+    __m256 acc0=_mm256_setzero_ps(), acc1=_mm256_setzero_ps(), acc2=_mm256_setzero_ps(), acc3=_mm256_setzero_ps();
+    __m256 acc4=_mm256_setzero_ps(), acc5=_mm256_setzero_ps(), acc6=_mm256_setzero_ps(), acc7=_mm256_setzero_ps();
+    for (int b8=0; b8<16; ++b8) {
+        const float* qblk = q + b8*8;
+        __m256 qv = _mm256_loadu_ps(qblk);
+        const std::size_t base = static_cast<std::size_t>(b8)*16 + static_cast<std::size_t>(lane_offset);
+        __m256 d0=_mm256_sub_ps(qv, _mm256_loadu_ps(panel_ptr + (base + 0)*8)); acc0=_mm256_fmadd_ps(d0,d0,acc0);
+        __m256 d1=_mm256_sub_ps(qv, _mm256_loadu_ps(panel_ptr + (base + 1)*8)); acc1=_mm256_fmadd_ps(d1,d1,acc1);
+        __m256 d2=_mm256_sub_ps(qv, _mm256_loadu_ps(panel_ptr + (base + 2)*8)); acc2=_mm256_fmadd_ps(d2,d2,acc2);
+        __m256 d3=_mm256_sub_ps(qv, _mm256_loadu_ps(panel_ptr + (base + 3)*8)); acc3=_mm256_fmadd_ps(d3,d3,acc3);
+        __m256 d4=_mm256_sub_ps(qv, _mm256_loadu_ps(panel_ptr + (base + 4)*8)); acc4=_mm256_fmadd_ps(d4,d4,acc4);
+        __m256 d5=_mm256_sub_ps(qv, _mm256_loadu_ps(panel_ptr + (base + 5)*8)); acc5=_mm256_fmadd_ps(d5,d5,acc5);
+        __m256 d6=_mm256_sub_ps(qv, _mm256_loadu_ps(panel_ptr + (base + 6)*8)); acc6=_mm256_fmadd_ps(d6,d6,acc6);
+        __m256 d7=_mm256_sub_ps(qv, _mm256_loadu_ps(panel_ptr + (base + 7)*8)); acc7=_mm256_fmadd_ps(d7,d7,acc7);
+    }
+    alignas(32) float tmp[8];
+    _mm256_store_ps(tmp, acc0); out[0]=tmp[0]+tmp[1]+tmp[2]+tmp[3]+tmp[4]+tmp[5]+tmp[6]+tmp[7];
+    _mm256_store_ps(tmp, acc1); out[1]=tmp[0]+tmp[1]+tmp[2]+tmp[3]+tmp[4]+tmp[5]+tmp[6]+tmp[7];
+    _mm256_store_ps(tmp, acc2); out[2]=tmp[0]+tmp[1]+tmp[2]+tmp[3]+tmp[4]+tmp[5]+tmp[6]+tmp[7];
+    _mm256_store_ps(tmp, acc3); out[3]=tmp[0]+tmp[1]+tmp[2]+tmp[3]+tmp[4]+tmp[5]+tmp[6]+tmp[7];
+    _mm256_store_ps(tmp, acc4); out[4]=tmp[0]+tmp[1]+tmp[2]+tmp[3]+tmp[4]+tmp[5]+tmp[6]+tmp[7];
+    _mm256_store_ps(tmp, acc5); out[5]=tmp[0]+tmp[1]+tmp[2]+tmp[3]+tmp[4]+tmp[5]+tmp[6]+tmp[7];
+    _mm256_store_ps(tmp, acc6); out[6]=tmp[0]+tmp[1]+tmp[2]+tmp[3]+tmp[4]+tmp[5]+tmp[6]+tmp[7];
+    _mm256_store_ps(tmp, acc7); out[7]=tmp[0]+tmp[1]+tmp[2]+tmp[3]+tmp[4]+tmp[5]+tmp[6]+tmp[7];
 }
 #endif
 
@@ -929,7 +1036,7 @@ std::uint32_t IvfPqIndex::Impl::kd_nearest_(const float* vec) const {
     std::uint32_t best_idx = 0;
     float best = std::numeric_limits<float>::infinity();
 
-    const bool use_proj = ([](){ const char* v = std::getenv("VESPER_KD_USE_PROJ"); return v && v[0] == '1'; })();
+    const bool use_proj = ([](){ auto v = vesper::core::safe_getenv("VESPER_KD_USE_PROJ"); return v && !v->empty() && ((*v)[0] == '1'); })();
 
     // Precompute 8-D projection of query once (if enabled)
     float qproj[8] = {0};
@@ -941,22 +1048,45 @@ std::uint32_t IvfPqIndex::Impl::kd_nearest_(const float* vec) const {
         }
     }
 
-    // Small fixed-capacity candidate set (best-first by lower bound)
-    constexpr int CAP = 512;
-    int cand_id[CAP];
-    float cand_lb[CAP];
-    int sz = 0;
-
-    auto push = [&](int nid, float lb) {
+    // Min-heap of candidate nodes by lower bound (exact best-first traversal)
+    std::vector<int> heap_id; heap_id.reserve(kd_nodes_.size());
+    std::vector<float> heap_key; heap_key.reserve(kd_nodes_.size());
+    auto heap_sift_up = [&](int i){
+        while (i > 0) {
+            int p = (i - 1) >> 1;
+            if (heap_key[p] <= heap_key[i]) break;
+            std::swap(heap_key[p], heap_key[i]);
+            std::swap(heap_id[p], heap_id[i]);
+            i = p;
+        }
+    };
+    auto heap_sift_down = [&](int i){
+        const int n = static_cast<int>(heap_id.size());
+        while (true) {
+            int l = (i << 1) + 1, r = l + 1, m = i;
+            if (l < n && heap_key[l] < heap_key[m]) m = l;
+            if (r < n && heap_key[r] < heap_key[m]) m = r;
+            if (m == i) break;
+            std::swap(heap_key[i], heap_key[m]);
+            std::swap(heap_id[i], heap_id[m]);
+            i = m;
+        }
+    };
+    auto heap_push = [&](int nid, float lb){
         if (nid < 0) return;
         if (lb < 0.0f) lb = 0.0f;
-        if (sz < CAP) { cand_id[sz] = nid; cand_lb[sz] = lb; ++sz; }
-        else {
-            int worst = 0;
-            for (int i = 1; i < CAP; ++i) if (cand_lb[i] > cand_lb[worst]) worst = i;
-            if (lb < cand_lb[worst]) { cand_id[worst] = nid; cand_lb[worst] = lb; }
-        }
+        heap_id.push_back(nid);
+        heap_key.push_back(lb);
+        heap_sift_up(static_cast<int>(heap_id.size()) - 1);
         kd_nodes_pushed_.fetch_add(1, std::memory_order_relaxed);
+    };
+    auto heap_pop_min = [&](){
+        if (heap_id.empty()) return -1;
+        const int nid = heap_id[0];
+        heap_id[0] = heap_id.back(); heap_id.pop_back();
+        heap_key[0] = heap_key.back(); heap_key.pop_back();
+        if (!heap_id.empty()) heap_sift_down(0);
+        return nid;
     };
 
     if (kd_root_ == -1) return 0u;
@@ -974,20 +1104,14 @@ std::uint32_t IvfPqIndex::Impl::kd_nearest_(const float* vec) const {
         // tighten with AABB lower bound
         const float lb_box = kd_box_lb_ptr(vec, root.bb_min.data(), root.bb_max.data(), dim);
         if (lb_box > lb) lb = lb_box;
-        push(kd_root_, lb);
+        heap_push(kd_root_, lb);
     }
 
-    while (sz > 0) {
-        int best_i = 0;
-        for (int i = 1; i < sz; ++i) if (cand_lb[i] < cand_lb[best_i]) best_i = i;
-        const float lb = cand_lb[best_i];
-        const int nid = cand_id[best_i];
-        // remove best_i
-        cand_id[best_i] = cand_id[--sz];
-        cand_lb[best_i] = cand_lb[sz];
+    while (true) {
+        const int nid = heap_pop_min();
+        if (nid < 0) break;
 
         kd_nodes_popped_.fetch_add(1, std::memory_order_relaxed);
-        if (lb >= best) continue; // prune
 
         const KDNode& node = kd_nodes_[static_cast<std::size_t>(nid)];
         // Re-evaluate bound at pop using full-dim (and proj if enabled)
@@ -1006,10 +1130,31 @@ std::uint32_t IvfPqIndex::Impl::kd_nearest_(const float* vec) const {
             const float lb_box = kd_box_lb_ptr(vec, node.bb_min.data(), node.bb_max.data(), dim);
             if (lb_box > lb_curr) lb_curr = lb_box;
         }
-        if (lb_curr >= best) continue;
+        if (lb_curr >= best) continue; // prune
+
         if (node.leaf) {
             if (dim == 128) {
-                for (std::uint32_t it = node.begin; it < node.end; ++it) {
+                const std::size_t uidx = static_cast<std::size_t>(nid);
+                const std::uint32_t L = node.end - node.begin;
+                const std::uint32_t blocks = (uidx < kd_leaf_panel_blocks_.size()) ? kd_leaf_panel_blocks_[uidx] : 0u;
+            #ifdef __AVX2__
+                if (blocks) {
+                    const float* panel = kd_leaf_panels_.data() + kd_leaf_panel_offset_[uidx];
+                    for (std::uint32_t b = 0; b < blocks; ++b) {
+                        float d0[8], d1[8];
+                        const float* pb = panel + static_cast<std::size_t>(b) * 128u * 16u;
+                        l2_128x8_avx2_panel(vec, pb, 0, d0);
+                        l2_128x8_avx2_panel(vec, pb, 8, d1);
+                        for (int t = 0; t < 8; ++t) {
+                            const std::uint32_t it0 = node.begin + b * 16u + static_cast<std::uint32_t>(t);
+                            if (d0[t] < best) { best = d0[t]; best_idx = kd_order_[it0]; }
+                            const std::uint32_t it1 = it0 + 8u;
+                            if (d1[t] < best) { best = d1[t]; best_idx = kd_order_[it1]; }
+                        }
+                    }
+                }
+            #endif
+                for (std::uint32_t it = node.begin + blocks * 16u; it < node.end; ++it) {
                     const float d = l2_128_fast_prune(vec, kd_leaf_centroids_[it], best);
                     if (d < best) { best = d; best_idx = kd_order_[it]; }
                 }
@@ -1036,7 +1181,7 @@ std::uint32_t IvfPqIndex::Impl::kd_nearest_(const float* vec) const {
             }
             const float lbL_box = kd_box_lb_ptr(vec, L.bb_min.data(), L.bb_max.data(), dim);
             if (lbL_box > lbL) lbL = lbL_box;
-            if (lbL < best) push(node.left, lbL);
+            if (lbL < best) heap_push(node.left, lbL);
         }
         if (node.right != -1) {
             const KDNode& R = kd_nodes_[static_cast<std::size_t>(node.right)];
@@ -1050,7 +1195,7 @@ std::uint32_t IvfPqIndex::Impl::kd_nearest_(const float* vec) const {
             }
             const float lbR_box = kd_box_lb_ptr(vec, R.bb_min.data(), R.bb_max.data(), dim);
             if (lbR_box > lbR) lbR = lbR_box;
-            if (lbR < best) push(node.right, lbR);
+            if (lbR < best) heap_push(node.right, lbR);
         }
     }
 
@@ -1085,21 +1230,41 @@ void IvfPqIndex::Impl::kd_assign_batch_(const float* data, std::size_t n, std::u
     std::vector<std::vector<std::uint32_t>> node_q(num_nodes);
     std::vector<float> node_min_lb(num_nodes, std::numeric_limits<float>::infinity());
 
-    // Min-heap of nodes by node_min_lb (implemented as simple arrays; sizes are small)
+    // Min-heap of nodes by node_min_lb (binary heap)
     std::vector<int> heap_ids; heap_ids.reserve(num_nodes);
     std::vector<float> heap_keys; heap_keys.reserve(num_nodes);
+    auto heap_sift_up = [&](int i){
+        while (i > 0) {
+            int p = (i - 1) >> 1;
+            if (heap_keys[p] <= heap_keys[i]) break;
+            std::swap(heap_keys[p], heap_keys[i]);
+            std::swap(heap_ids[p], heap_ids[i]);
+            i = p;
+        }
+    };
+    auto heap_sift_down = [&](int i){
+        const int n = static_cast<int>(heap_ids.size());
+        while (true) {
+            int l = (i << 1) + 1, r = l + 1, m = i;
+            if (l < n && heap_keys[l] < heap_keys[m]) m = l;
+            if (r < n && heap_keys[r] < heap_keys[m]) m = r;
+            if (m == i) break;
+            std::swap(heap_keys[i], heap_keys[m]);
+            std::swap(heap_ids[i], heap_ids[m]);
+            i = m;
+        }
+    };
     auto heap_push = [&](int nid){
-        heap_ids.push_back(nid); heap_keys.push_back(node_min_lb[static_cast<std::size_t>(nid)]);
+        const float key = node_min_lb[static_cast<std::size_t>(nid)];
+        heap_ids.push_back(nid); heap_keys.push_back(key);
+        heap_sift_up(static_cast<int>(heap_ids.size()) - 1);
     };
     auto heap_pop_min = [&](){
         if (heap_ids.empty()) return -1;
-        int best_i = 0; float best_k = heap_keys[0];
-        for (int i = 1; i < static_cast<int>(heap_ids.size()); ++i) {
-            if (heap_keys[i] < best_k) { best_k = heap_keys[i]; best_i = i; }
-        }
-        const int nid = heap_ids[best_i];
-        heap_ids[best_i] = heap_ids.back(); heap_ids.pop_back();
-        heap_keys[best_i] = heap_keys.back(); heap_keys.pop_back();
+        const int nid = heap_ids[0];
+        heap_ids[0] = heap_ids.back(); heap_ids.pop_back();
+        heap_keys[0] = heap_keys.back(); heap_keys.pop_back();
+        if (!heap_ids.empty()) heap_sift_down(0);
         return nid;
     };
     auto consider_push_node = [&](int nid){
@@ -1159,7 +1324,25 @@ void IvfPqIndex::Impl::kd_assign_batch_(const float* data, std::size_t n, std::u
                 float b = best[qi];
                 std::uint32_t bidx = best_idx[qi];
                 if (dim == 128) {
-                    for (std::uint32_t j = 0; j < L; ++j) {
+                    const std::uint32_t blocks = kd_leaf_panel_blocks_[u];
+                #ifdef __AVX2__
+                    if (blocks) {
+                        const float* panel = kd_leaf_panels_.data() + kd_leaf_panel_offset_[u];
+                        for (std::uint32_t bblk = 0; bblk < blocks; ++bblk) {
+                            float d0[8], d1[8];
+                            const float* pb = panel + static_cast<std::size_t>(bblk) * 128u * 16u;
+                            l2_128x8_avx2_panel(qv, pb, 0, d0);
+                            l2_128x8_avx2_panel(qv, pb, 8, d1);
+                            for (int t = 0; t < 8; ++t) {
+                                const std::uint32_t it0 = node.begin + bblk * 16u + static_cast<std::uint32_t>(t);
+                                if (d0[t] < b) { b = d0[t]; bidx = kd_order_[it0]; }
+                                const std::uint32_t it1 = it0 + 8u;
+                                if (d1[t] < b) { b = d1[t]; bidx = kd_order_[it1]; }
+                            }
+                        }
+                    }
+                #endif
+                    for (std::uint32_t j = blocks * 16u; j < L; ++j) {
                         const std::uint32_t idx = node.begin + j;
                         const float v = l2_128_fast_prune(qv, kd_leaf_centroids_[idx], b);
                         if (v < b) { b = v; bidx = kd_order_[idx]; }
@@ -1710,7 +1893,7 @@ auto IvfPqIndex::Impl::add(const std::uint64_t* ids, const float* data, std::siz
     const auto& ops = kernels::select_backend_auto();
 
     // Optional timing
-    const bool kTimingAdd = (state_.params.timings_enabled || state_.params.verbose || ([](){ const char* v = std::getenv("VESPER_TIMING"); return v && v[0] != '0' && v[0] != '\0'; })());
+    const bool kTimingAdd = (state_.params.timings_enabled || state_.params.verbose || ([](){ auto v = vesper::core::safe_getenv("VESPER_TIMING"); return v && !v->empty() && ((*v)[0] != '0'); })());
     auto t_assign_start = kTimingAdd ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
 
     // Reset KD counters for this add() run
@@ -1721,7 +1904,7 @@ auto IvfPqIndex::Impl::add(const std::uint64_t* ids, const float* data, std::siz
     kd_leaf_ns_.store(0, std::memory_order_relaxed);
 
     if (state_.params.use_centroid_ann && state_.params.coarse_assigner == CoarseAssigner::KDTree && kd_root_ != -1) {
-        const bool use_batch = ([](){ const char* v = std::getenv("VESPER_KD_BATCH"); return v && v[0] == '1'; })();
+        const bool use_batch = ([](){ auto v = vesper::core::safe_getenv("VESPER_KD_BATCH"); return v && !v->empty() && ((*v)[0] == '1'); })();
         if (use_batch) {
             // KD-tree exact nearest centroid assignment (batched, serial within assignment)
             kd_assign_batch_(data, n, assignments.data());
@@ -2080,7 +2263,7 @@ auto IvfPqIndex::Impl::search(const float* query, const IvfPqSearchParams& param
 
     const bool use_heapless = (pool_k <= 64);
     TopKBuffer topk(pool_k);
-    static const bool kTiming = [](){ const char* v = std::getenv("VESPER_TIMING"); return v && v[0] != '0' && v[0] != '\0'; }();
+    static const bool kTiming = [](){ auto v = vesper::core::safe_getenv("VESPER_TIMING"); return v && !v->empty() && ((*v)[0] != '0'); }();
     auto t_adc_start = std::chrono::steady_clock::now();
 
     std::vector<float> residual_query(state_.dim);
@@ -2325,7 +2508,7 @@ auto IvfPqIndex::get_stats() const noexcept -> Stats {
     stats.kd_leaves_scanned = impl_->kd_leaves_scanned_.load(std::memory_order_relaxed);
 
     // Timing telemetry (enabled if verbose or timings flag or env VESPER_TIMING)
-    const bool env_timing = [](){ const char* v = std::getenv("VESPER_TIMING"); return v && v[0] != '0' && v[0] != '\0'; }();
+    const bool env_timing = [](){ auto v = vesper::core::safe_getenv("VESPER_TIMING"); return v && !v->empty() && ((*v)[0] != '0'); }();
     stats.timings_enabled = impl_->state_.params.verbose || impl_->state_.params.timings_enabled || env_timing;
     if (stats.timings_enabled) {
         const double inv_million = 1.0 / 1'000'000.0;
@@ -2391,9 +2574,8 @@ auto IvfPqIndex::save(const std::string& path) const -> std::expected<void, core
     auto write_and_hash = [&](const void* ptr, std::size_t nbytes){ write_bytes(ptr, nbytes); fnv_update(checksum, ptr, nbytes); };
 
     // Optional v1.1 sectioned format with optional zstd compression
-    auto env_get = [](const char* k)->const char*{ return std::getenv(k); };
     bool use_v11 = false;
-    if (const char* e = env_get("VESPER_IVFPQ_SAVE_V11")) { use_v11 = (*e == '1'); }
+    if (auto e = vesper::core::safe_getenv("VESPER_IVFPQ_SAVE_V11")) { use_v11 = (!e->empty() && (*e)[0] == '1'); }
     if (use_v11) {
         // write v1.1 header
         const char magic11[8] = {'I','V','F','P','Q','v','1','1'};
@@ -2642,8 +2824,13 @@ auto IvfPqIndex::load(const std::string& path)
     }
 
     // If mmap is requested and v1.1 file, switch to mmap-based parser
-    bool want_mmap = false; if (const char* e = std::getenv("VESPER_IVFPQ_LOAD_MMAP")) want_mmap = (*e=='1');
-    if (want_mmap && is_v11) {
+    bool want_mmap = false; if (auto e = vesper::core::safe_getenv("VESPER_IVFPQ_LOAD_MMAP")) want_mmap = (!e->empty() && (*e)[0]=='1');
+#if defined(_WIN32)
+    const bool mmap_supported = false; // Temporarily disable mmap on Windows; fallback to streaming for stability
+#else
+    const bool mmap_supported = true;
+#endif
+    if (want_mmap && is_v11 && mmap_supported) {
         file.close();
 
         auto parse_v11_mmap = [&](const std::string& fpath) -> std::expected<IvfPqIndex, error> {
@@ -3002,9 +3189,9 @@ auto IvfPqIndex::load(const std::string& path)
     // Centroids: allow toggling between baseline (temp buffer + copy) and direct streaming into aligned buffer
     // Env: VESPER_IVFPQ_LOAD_STREAM_CENTROIDS -> 1 (default) streams directly; 0 uses baseline copy path
     bool stream_centroids = true;
-    if (const char* e = std::getenv("VESPER_IVFPQ_LOAD_STREAM_CENTROIDS")) {
-        if (*e == '0') stream_centroids = false;
-        else if (*e == '1') stream_centroids = true;
+    if (auto e = vesper::core::safe_getenv("VESPER_IVFPQ_LOAD_STREAM_CENTROIDS")) {
+        if (!e->empty() && (*e)[0] == '0') stream_centroids = false;
+        else if (!e->empty() && (*e)[0] == '1') stream_centroids = true;
     }
 
     impl.state_.coarse_centroids = AlignedCentroidBuffer(nlist, dim);
