@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include "vesper/core/platform_utils.hpp"
 #include <numeric>
 #include <limits>
 #include <vector>
@@ -24,9 +25,17 @@ struct Cand { float dist; std::uint32_t idx; };
 static inline bool cand_cmp(const Cand& a, const Cand& b) { return a.dist < b.dist; }
 }
 
+// Fast argmax over a float array; returns index and value. Scalar fallback; can be SIMD-optimized later.
+static inline void argmax_f32(const float* x, std::size_t len, std::size_t& out_idx, float& out_val) {
+    std::size_t idx = 0; float val = x[0];
+    for (std::size_t i = 1; i < len; ++i) { const float v = x[i]; if (v > val) { val = v; idx = i; } }
+    out_idx = idx; out_val = val;
+}
+
+
 void projection_screen_select(const ProjScreenInputs& in, ProjScreenOutputs& out) {
     using clock = std::chrono::steady_clock;
-    const bool do_prof = [](){ const char* v = std::getenv("VESPER_PROJ_PROF"); return v && v[0]=='1'; }();
+    const bool do_prof = [](){ auto v = vesper::core::safe_getenv("VESPER_PROJ_PROF"); return v && !v->empty() && ((*v)[0]=='1'); }();
     auto t0 = clock::now();
 
     const std::size_t n = in.n;
@@ -40,6 +49,9 @@ void projection_screen_select(const ProjScreenInputs& in, ProjScreenOutputs& out
     std::vector<std::uint32_t> curr_idx(n * static_cast<std::size_t>(L), 0);
     std::vector<float> curr_dist(n * static_cast<std::size_t>(L), INFINITY);
     std::vector<std::size_t> curr_size(n, 0);
+    // Cached worst tracking for running top-L per row
+    std::vector<std::size_t> curr_worst_pos(n, 0);
+    std::vector<float> curr_worst_val(n, -std::numeric_limits<float>::infinity());
 
     double compute_ms_acc = 0.0, select_ms_acc = 0.0;
     std::size_t total_block_candidates = 0;
@@ -64,10 +76,8 @@ void projection_screen_select(const ProjScreenInputs& in, ProjScreenOutputs& out
             compute_ms_acc += std::chrono::duration<double, std::milli>(t_c1 - t_c0).count();
 
             auto t_s0 = clock::now();
-            // For each row in this block: build jb distances, select top-L in-block, then merge with curr top-L
-            std::vector<int> idx_buf(jb);
-            std::vector<float> dist_buf(jb);
-            const std::uint32_t lb = static_cast<std::uint32_t>(std::min<std::size_t>(L, jb));
+            // For each row in this block: build jb distances, select top-T in-block (T=L/2), then merge with curr top-L
+            const std::uint32_t T = static_cast<std::uint32_t>(std::min<std::size_t>(L, jb));
             for (std::size_t r = 0; r < qb; ++r) {
                 const std::size_t i = i0 + r;
                 const float qi = in.qnorm[i];
@@ -79,7 +89,7 @@ void projection_screen_select(const ProjScreenInputs& in, ProjScreenOutputs& out
                     const std::size_t cj = j0 + jj;
                     const float dot = dots[r * jb + jj];
                     const float d = qi + in.centroid_norms[cj] - 2.0f * dot;
-                    if (bsz < lb) {
+                    if (bsz < T) {
                         blk_idx[bsz] = static_cast<std::uint32_t>(cj);
                         blk_dist[bsz] = d;
                         if (argmax < 0 || d > maxd) { argmax = static_cast<int>(bsz); maxd = d; }
@@ -92,18 +102,23 @@ void projection_screen_select(const ProjScreenInputs& in, ProjScreenOutputs& out
                         for (std::size_t t = 1; t < bsz; ++t) { if (blk_dist[t] > maxd) { maxd = blk_dist[t]; argmax = static_cast<int>(t); } }
                     }
                 }
-                // Merge block results into current top-L
+                // Merge block results into current top-L (cached worst tracking)
                 const std::size_t base = row_base(i);
                 for (std::size_t t = 0; t < bsz; ++t) {
+                    const float d = blk_dist[t];
                     if (curr_size[i] < L) {
-                        curr_idx[base + curr_size[i]] = blk_idx[t];
-                        curr_dist[base + curr_size[i]] = blk_dist[t];
+                        const std::size_t pos = base + curr_size[i];
+                        curr_idx[pos] = blk_idx[t];
+                        curr_dist[pos] = d;
+                        if (curr_size[i] == 0 || d > curr_worst_val[i]) { curr_worst_pos[i] = curr_size[i]; curr_worst_val[i] = d; }
                         ++curr_size[i];
-                    } else {
-                        // find current worst
-                        std::size_t w = 0; float wdist = curr_dist[base + 0];
-                        for (std::size_t u = 1; u < L; ++u) { if (curr_dist[base + u] > wdist) { w = u; wdist = curr_dist[base + u]; } }
-                        if (blk_dist[t] < wdist) { curr_idx[base + w] = blk_idx[t]; curr_dist[base + w] = blk_dist[t]; }
+                    } else if (d < curr_worst_val[i]) {
+                        const std::size_t wpos = base + curr_worst_pos[i];
+                        curr_idx[wpos] = blk_idx[t];
+                        curr_dist[wpos] = d;
+                        std::size_t w = 0; float wdist = 0.0f;
+                        argmax_f32(&curr_dist[base], L, w, wdist);
+                        curr_worst_pos[i] = w; curr_worst_val[i] = wdist;
                     }
                 }
                 total_block_candidates += bsz;
@@ -153,9 +168,9 @@ void projection_screen_select(const ProjScreenInputs& in, ProjScreenOutputs& out
                     for (int k = 0; k < 16; ++k) {
                         __m256 a_top = _mm256_loadu_ps(Apack + k*16 + 0);
                         __m256 a_bot = _mm256_loadu_ps(Apack + k*16 + 8);
-                        __m256 yk = _mm256_loadu_ps(Bpack + k*8);
+                        const float* yk = Bpack + k*8;
                         for (int j = 0; j < 8; ++j) {
-                            __m256 b = _mm256_set1_ps(reinterpret_cast<const float*>(&yk)[j]);
+                            __m256 b = _mm256_broadcast_ss(yk + j);
                             Ctop[j] = _mm256_fmadd_ps(a_top, b, Ctop[j]);
                             Cbot[j] = _mm256_fmadd_ps(a_bot, b, Cbot[j]);
                         }
@@ -176,33 +191,102 @@ void projection_screen_select(const ProjScreenInputs& in, ProjScreenOutputs& out
                         }
                     }
                 }
-                // For each row in this tile, select top-L for this block and merge
-                const std::uint32_t lb = static_cast<std::uint32_t>(std::min<std::size_t>(L, jb));
+                // For each row in this tile, select top-T (T=L/2) for this block using fixed-size buffers, and merge with cached-worst
+                const std::uint32_t T = static_cast<std::uint32_t>(std::min<std::size_t>(L, jb));
                 for (int r = 0; r < 16; ++r) {
                     const std::size_t i = static_cast<std::size_t>(i0 + r);
                     if (i >= n) break;
-                    std::iota(idx_buf.begin(), idx_buf.end(), 0);
-                    if (jb > lb) {
-                        std::nth_element(idx_buf.begin(), idx_buf.begin() + lb, idx_buf.end(),
-                            [&](int a, int b){ return dist_buf[a] < dist_buf[b]; });
+                    std::uint32_t blk_idx[256];
+                    float blk_dist[256];
+                    std::size_t bsz = 0; int argmax = -1; float maxd = -std::numeric_limits<float>::infinity();
+                    for (std::size_t jj = 0; jj < jb; ++jj) {
+                        const float d = dist_buf[jj];
+                        if (bsz < T) {
+                            blk_idx[bsz] = static_cast<std::uint32_t>(j0 + jj);
+                            blk_dist[bsz] = d;
+                            if (argmax < 0 || d > maxd) { argmax = static_cast<int>(bsz); maxd = d; }
+                            ++bsz;
+                        } else if (d < maxd) {
+                            blk_idx[argmax] = static_cast<std::uint32_t>(j0 + jj);
+                            blk_dist[argmax] = d;
+                            argmax = 0; maxd = blk_dist[0];
+                            for (std::size_t t = 1; t < bsz; ++t) { if (blk_dist[t] > maxd) { maxd = blk_dist[t]; argmax = static_cast<int>(t); } }
+                        }
                     }
                     const std::size_t base = row_base(i);
-                    const std::size_t s1 = curr_size[i];
-                    const std::size_t s2 = lb;
-                    std::uint32_t tmp_idx[512];
-                    float tmp_dist[512];
-                    std::size_t tcount = 0;
-                    for (std::size_t t = 0; t < s1; ++t) { tmp_idx[tcount] = curr_idx[base + t]; tmp_dist[tcount++] = curr_dist[base + t]; }
-                    for (std::size_t t = 0; t < s2; ++t) { tmp_idx[tcount] = static_cast<std::uint32_t>(j0 + idx_buf[t]); tmp_dist[tcount++] = dist_buf[idx_buf[t]]; }
-                    const std::size_t keep = std::min<std::size_t>(L, tcount);
-                    std::vector<int> ord(tcount); std::iota(ord.begin(), ord.end(), 0);
-                    std::nth_element(ord.begin(), ord.begin() + static_cast<long long>(keep), ord.end(),
-                        [&](int a, int b){ return tmp_dist[a] < tmp_dist[b]; });
-                    for (std::size_t t = 0; t < keep; ++t) { curr_idx[base + t] = tmp_idx[ord[t]]; curr_dist[base + t] = tmp_dist[ord[t]]; }
-                    curr_size[i] = keep;
-                    total_block_candidates += s2;
+                    for (std::size_t t = 0; t < bsz; ++t) {
+                        const float d = blk_dist[t];
+                        if (curr_size[i] < L) {
+                            const std::size_t pos = base + curr_size[i];
+                            curr_idx[pos] = blk_idx[t];
+                            curr_dist[pos] = d;
+                            if (curr_size[i] == 0 || d > curr_worst_val[i]) { curr_worst_pos[i] = curr_size[i]; curr_worst_val[i] = d; }
+                            ++curr_size[i];
+                        } else if (d < curr_worst_val[i]) {
+                            const std::size_t wpos = base + curr_worst_pos[i];
+                            curr_idx[wpos] = blk_idx[t];
+                            curr_dist[wpos] = d;
+                            std::size_t w = 0; float wdist = 0.0f;
+                            argmax_f32(&curr_dist[base], L, w, wdist);
+                            curr_worst_pos[i] = w; curr_worst_val[i] = wdist;
+                        }
+                    }
+                    total_block_candidates += bsz;
                 }
             }
+                // Handle remainder rows not covered by 16-row tiles
+                if (ntiles < n) {
+                    const std::uint32_t T = static_cast<std::uint32_t>(std::min<std::size_t>(L, jb));
+                    for (std::size_t i = ntiles; i < n; ++i) {
+                        // Compute distances for this block j0..j0+jb for row i (scalar dot over p=16)
+                        const float qi = in.qnorm[i];
+                        for (std::size_t jj = 0; jj < jb; ++jj) {
+                            const std::size_t cj = j0 + jj;
+                            const float* yc = in.centroids_rm + cj * p;
+                            const float* qp = in.qproj + i * p;
+                            float dot = 0.0f; for (int k = 0; k < 16; ++k) dot += qp[k] * yc[k];
+                            dist_buf[jj] = qi + in.centroid_norms[cj] - 2.0f * dot;
+                        }
+                        // Select top-T for this block and merge into running top-L
+                        std::uint32_t blk_idx[256];
+                        float blk_dist[256];
+                        std::size_t bsz = 0; int argmax = -1; float maxd = -std::numeric_limits<float>::infinity();
+                        for (std::size_t jj = 0; jj < jb; ++jj) {
+                            const float d = dist_buf[jj];
+                            if (bsz < T) {
+                                blk_idx[bsz] = static_cast<std::uint32_t>(j0 + jj);
+                                blk_dist[bsz] = d;
+                                if (argmax < 0 || d > maxd) { argmax = static_cast<int>(bsz); maxd = d; }
+                                ++bsz;
+                            } else if (d < maxd) {
+                                blk_idx[argmax] = static_cast<std::uint32_t>(j0 + jj);
+                                blk_dist[argmax] = d;
+                                argmax = 0; maxd = blk_dist[0];
+                                for (std::size_t t = 1; t < bsz; ++t) { if (blk_dist[t] > maxd) { maxd = blk_dist[t]; argmax = static_cast<int>(t); } }
+                            }
+                        }
+                        const std::size_t base = row_base(i);
+                        for (std::size_t t = 0; t < bsz; ++t) {
+                            const float d = blk_dist[t];
+                            if (curr_size[i] < L) {
+                                const std::size_t pos = base + curr_size[i];
+                                curr_idx[pos] = blk_idx[t];
+                                curr_dist[pos] = d;
+                                if (curr_size[i] == 0 || d > curr_worst_val[i]) { curr_worst_pos[i] = curr_size[i]; curr_worst_val[i] = d; }
+                                ++curr_size[i];
+                            } else if (d < curr_worst_val[i]) {
+                                const std::size_t wpos = base + curr_worst_pos[i];
+                                curr_idx[wpos] = blk_idx[t];
+                                curr_dist[wpos] = d;
+                                std::size_t w = 0; float wdist = 0.0f;
+                                argmax_f32(&curr_dist[base], L, w, wdist);
+                                curr_worst_pos[i] = w; curr_worst_val[i] = wdist;
+                            }
+                        }
+                        total_block_candidates += bsz;
+                    }
+                }
+
             auto t_c1 = clock::now();
             compute_ms_acc += std::chrono::duration<double, std::milli>(t_c1 - t_c0).count();
             if (do_prof) {
@@ -212,6 +296,7 @@ void projection_screen_select(const ProjScreenInputs& in, ProjScreenOutputs& out
         }
     } else
 #endif
+#if !defined(VESPER_HAS_CBLAS)
     {
         // Scalar fallback with blockwise selection
         const std::size_t CB = 256;
@@ -220,9 +305,9 @@ void projection_screen_select(const ProjScreenInputs& in, ProjScreenOutputs& out
             auto t_c0 = clock::now();
             (void)t_c0; // compute is fused with selection here
             auto t_s0 = clock::now();
-            std::vector<int> idx_buf(jb);
+            // Scalar fallback: compute distances, select top-T (T=L/2) per block using fixed-size buffers, then merge with cached-worst
             std::vector<float> dist_buf(jb);
-            const std::uint32_t lb = static_cast<std::uint32_t>(std::min<std::size_t>(L, jb));
+            const std::uint32_t T = static_cast<std::uint32_t>(std::min<std::size_t>(L, jb));
             for (std::size_t i = 0; i < n; ++i) {
                 const float* qp = in.qproj + i * p;
                 const float qi = in.qnorm[i];
@@ -232,26 +317,42 @@ void projection_screen_select(const ProjScreenInputs& in, ProjScreenOutputs& out
                     float dot = 0.0f; for (std::size_t k = 0; k < p; ++k) dot += qp[k] * yc[k];
                     dist_buf[jj] = qi + in.centroid_norms[cj] - 2.0f * dot;
                 }
-                std::iota(idx_buf.begin(), idx_buf.end(), 0);
-                if (jb > lb) {
-                    std::nth_element(idx_buf.begin(), idx_buf.begin() + lb, idx_buf.end(),
-                        [&](int a, int b){ return dist_buf[a] < dist_buf[b]; });
+                std::uint32_t blk_idx[256];
+                float blk_dist[256];
+                std::size_t bsz = 0; int argmax = -1; float maxd = -std::numeric_limits<float>::infinity();
+                for (std::size_t jj = 0; jj < jb; ++jj) {
+                    const float d = dist_buf[jj];
+                    if (bsz < T) {
+                        blk_idx[bsz] = static_cast<std::uint32_t>(j0 + jj);
+                        blk_dist[bsz] = d;
+                        if (argmax < 0 || d > maxd) { argmax = static_cast<int>(bsz); maxd = d; }
+                        ++bsz;
+                    } else if (d < maxd) {
+                        blk_idx[argmax] = static_cast<std::uint32_t>(j0 + jj);
+                        blk_dist[argmax] = d;
+                        argmax = 0; maxd = blk_dist[0];
+                        for (std::size_t t = 1; t < bsz; ++t) { if (blk_dist[t] > maxd) { maxd = blk_dist[t]; argmax = static_cast<int>(t); } }
+                    }
                 }
                 const std::size_t base = row_base(i);
-                const std::size_t s1 = curr_size[i];
-                const std::size_t s2 = lb;
-                std::uint32_t tmp_idx[512];
-                float tmp_dist[512];
-                std::size_t tcount = 0;
-                for (std::size_t t = 0; t < s1; ++t) { tmp_idx[tcount] = curr_idx[base + t]; tmp_dist[tcount++] = curr_dist[base + t]; }
-                for (std::size_t t = 0; t < s2; ++t) { tmp_idx[tcount] = static_cast<std::uint32_t>(j0 + idx_buf[t]); tmp_dist[tcount++] = dist_buf[idx_buf[t]]; }
-                const std::size_t keep = std::min<std::size_t>(L, tcount);
-                std::vector<int> ord(tcount); std::iota(ord.begin(), ord.end(), 0);
-                std::nth_element(ord.begin(), ord.begin() + static_cast<long long>(keep), ord.end(),
-                    [&](int a, int b){ return tmp_dist[a] < tmp_dist[b]; });
-                for (std::size_t t = 0; t < keep; ++t) { curr_idx[base + t] = tmp_idx[ord[t]]; curr_dist[base + t] = tmp_dist[ord[t]]; }
-                curr_size[i] = keep;
-                total_block_candidates += s2;
+                for (std::size_t t = 0; t < bsz; ++t) {
+                    const float d = blk_dist[t];
+                    if (curr_size[i] < L) {
+                        const std::size_t pos = base + curr_size[i];
+                        curr_idx[pos] = blk_idx[t];
+                        curr_dist[pos] = d;
+                        if (curr_size[i] == 0 || d > curr_worst_val[i]) { curr_worst_pos[i] = curr_size[i]; curr_worst_val[i] = d; }
+                        ++curr_size[i];
+                    } else if (d < curr_worst_val[i]) {
+                        const std::size_t wpos = base + curr_worst_pos[i];
+                        curr_idx[wpos] = blk_idx[t];
+                        curr_dist[wpos] = d;
+                        std::size_t w = 0; float wdist = 0.0f;
+                        argmax_f32(&curr_dist[base], L, w, wdist);
+                        curr_worst_pos[i] = w; curr_worst_val[i] = wdist;
+                    }
+                }
+                total_block_candidates += bsz;
             }
             auto t_s1 = clock::now();
             select_ms_acc += std::chrono::duration<double, std::milli>(t_s1 - t_s0).count();
@@ -261,6 +362,7 @@ void projection_screen_select(const ProjScreenInputs& in, ProjScreenOutputs& out
             }
         }
     }
+#endif
 
     // Scatter to output arrays in arbitrary order (not guaranteed sorted)
     for (std::size_t i = 0; i < n; ++i) {
