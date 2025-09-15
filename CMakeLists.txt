@@ -119,7 +119,11 @@ set(VESPER_CORE_SOURCES
     src/index/index_manager.cpp
     src/index/query_planner.cpp
     src/index/rabitq_quantizer.cpp
+    src/index/fast_hadamard.cpp
     src/index/matryoshka.cpp
+    src/index/bm25.cpp
+    src/search/hybrid_searcher.cpp
+    src/search/fusion_algorithms.cpp
     src/io/async_io.cpp
     src/io/prefetch_manager.cpp
     src/tombstone/tombstone_manager.cpp
@@ -234,6 +238,20 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|amd64|x64")
     target_compile_options(vesper_core PRIVATE -mavx2 -mfma)
   endif()
 endif()
+# ----------------------
+# C API (shared)
+# ----------------------
+add_library(vesper_c SHARED src/c/vesper_c_api.cpp src/c/vesper_manager_c_api.cpp)
+# Public headers for consumers of the C API
+target_include_directories(vesper_c PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+# Link core implementation
+target_link_libraries(vesper_c PRIVATE vesper_headers vesper_core)
+# Export macro for Windows
+target_compile_definitions(vesper_c PRIVATE VESPER_C_API_EXPORTS=1)
+if (MSVC)
+  target_compile_options(vesper_c PRIVATE /EHa)
+endif()
+
 
 # Feature flags as compile definitions for core library
 if (VESPER_ENABLE_ACCELERATE)
@@ -660,11 +678,53 @@ else()
   target_link_libraries(ivfpq_persist_bench PRIVATE vesper_headers vesper_core Threads::Threads)
 endif()
 
+# ----------------------
+# C API Example
+# ----------------------
+add_executable(vesper_c_example examples/c/vesper_c_example.c)
+target_include_directories(vesper_c_example PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(vesper_c_example PRIVATE vesper_c)
+# On Windows, copy the DLL next to the example so it can run under CTest
+if (WIN32)
+  add_custom_command(TARGET vesper_c_example POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:vesper_c> $<TARGET_FILE_DIR:vesper_c_example>)
+endif()
+
+# CTest for the example
+add_test(NAME test_c_api_example COMMAND $<TARGET_FILE:vesper_c_example>)
+
+# ----------------------
+# IndexManager C API Example
+# ----------------------
+add_executable(vesper_manager_example examples/c/vesper_manager_example.c)
+target_include_directories(vesper_manager_example PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(vesper_manager_example PRIVATE vesper_c)
+if (WIN32)
+  add_custom_command(TARGET vesper_manager_example POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:vesper_c> $<TARGET_FILE_DIR:vesper_manager_example>)
+endif()
+
+add_test(NAME test_c_index_manager_example COMMAND $<TARGET_FILE:vesper_manager_example>)
+
 # add() throughput micro-bench for Task 18 acceptance
 add_executable(ivfpq_add_bench tools/ivfpq_add_bench.cpp)
 target_link_libraries(ivfpq_add_bench PRIVATE vesper_headers vesper_core Threads::Threads)
 if (MSVC)
   target_compile_options(ivfpq_add_bench PRIVATE /EHa)
+endif()
+
+# Hierarchical KD-tree test
+add_executable(test_hierarchical_kd tools/test_hierarchical_kd.cpp)
+target_link_libraries(test_hierarchical_kd PRIVATE vesper_headers vesper_core Threads::Threads)
+
+# E2E runner: load dataset, build, persist, reload, query
+add_executable(vesper_e2e_runner tools/vesper_e2e_runner.cpp)
+target_link_libraries(vesper_e2e_runner PRIVATE vesper_headers vesper_core Threads::Threads)
+target_include_directories(vesper_e2e_runner PRIVATE ${CMAKE_SOURCE_DIR})
+if (MSVC)
+  target_compile_options(vesper_e2e_runner PRIVATE /EHa)
+target_sources(vesper_e2e_runner PRIVATE tests/integration/dataset_loader.cpp)
+
 endif()
 
 
