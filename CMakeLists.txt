@@ -473,6 +473,8 @@ endif()
 
   add_executable(vesper_bench_simd bench/micro/simd_kernels_bench.cpp)
   target_link_libraries(vesper_bench_simd PRIVATE benchmark::benchmark vesper_headers vesper_core)
+  add_executable(vesper_bench_hybrid bench/micro/hybrid_search_bench.cpp)
+  target_link_libraries(vesper_bench_hybrid PRIVATE benchmark::benchmark vesper_headers vesper_core)
 
   add_executable(vesper_bench_index bench/vesper_bench_index.cpp)
   target_link_libraries(vesper_bench_index PRIVATE benchmark::benchmark vesper_headers vesper_core Threads::Threads)
