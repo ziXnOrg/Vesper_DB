@@ -247,7 +247,7 @@ public:
     std::vector<std::uint32_t> kd_order_;
     AlignedCentroidBuffer kd_leaf_centroids_{1, 1};
     int kd_root_{-1};
-    std::uint32_t kd_leaf_size_{256};
+    std::uint32_t kd_leaf_size_{64};  // Optimized from 256 based on benchmarking
     
     // Van Emde Boas layout for cache-oblivious traversal
     std::vector<KDNode> kd_nodes_veb_;
@@ -2827,7 +2827,13 @@ auto IvfPqIndex::Impl::add(const std::uint64_t* ids, const float* data, std::siz
     kd_leaf_ns_.store(0, std::memory_order_relaxed);
 
     if (state_.params.use_centroid_ann && state_.params.coarse_assigner == CoarseAssigner::KDTree && kd_root_ != -1) {
-        const bool use_batch = ([](){ auto v = vesper::core::safe_getenv("VESPER_KD_BATCH"); return v && !v->empty() && ((*v)[0] == '1'); })();
+        // Batch mode is default (better performance); disable with VESPER_KD_BATCH=0
+        bool use_batch = true;
+        if (auto v = vesper::core::safe_getenv("VESPER_KD_BATCH")) {
+            if (!v->empty() && (*v)[0] == '0') {
+                use_batch = false;
+            }
+        }
         const bool force_no_veb = ([](){ auto v = vesper::core::safe_getenv("VESPER_NO_VEB"); return v && !v->empty() && ((*v)[0] == '1'); })();
         
         if (use_batch) {
