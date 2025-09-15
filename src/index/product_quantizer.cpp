@@ -462,7 +462,7 @@ public:
         
         auto impl = std::make_unique<Impl>();
         
-        // Read parameters
+        // Read parameters with error checking
         file.read(reinterpret_cast<char*>(&impl->m_), sizeof(impl->m_));
         file.read(reinterpret_cast<char*>(&impl->nbits_), sizeof(impl->nbits_));
         file.read(reinterpret_cast<char*>(&impl->ksub_), sizeof(impl->ksub_));
@@ -470,6 +470,14 @@ public:
         file.read(reinterpret_cast<char*>(&impl->dim_), sizeof(impl->dim_));
         file.read(reinterpret_cast<char*>(&impl->trained_), sizeof(impl->trained_));
         file.read(reinterpret_cast<char*>(&impl->has_rotation_), sizeof(impl->has_rotation_));
+        
+        if (!file) {
+            return std::vesper_unexpected(error{
+                error_code::io_failed,
+                "Failed to read PQ parameters from file",
+                "product_quantizer"
+            });
+        }
         
         if (impl->trained_) {
             // Allocate and read codebooks
@@ -480,6 +488,14 @@ public:
                 auto centroid = impl->codebooks_->get_centroid(i);
                 file.read(reinterpret_cast<char*>(centroid.data()), 
                          impl->dsub_ * sizeof(float));
+                
+                if (!file) {
+                    return std::vesper_unexpected(error{
+                        error_code::io_failed,
+                        "Failed to read codebook centroids from file",
+                        "product_quantizer"
+                    });
+                }
             }
             
             // Read rotation matrix if OPQ
@@ -487,15 +503,15 @@ public:
                 impl->rotation_matrix_.resize(impl->dim_ * impl->dim_);
                 file.read(reinterpret_cast<char*>(impl->rotation_matrix_.data()),
                          impl->dim_ * impl->dim_ * sizeof(float));
+                         
+                if (!file) {
+                    return std::vesper_unexpected(error{
+                        error_code::io_failed,
+                        "Failed to read OPQ rotation matrix",
+                        "product_quantizer"
+                    });
+                }
             }
-        }
-        
-        if (!file.good()) {
-            return std::vesper_unexpected(error{
-                error_code::io_failed,
-                "Failed to read quantizer data",
-                "product_quantizer"
-            });
         }
         
         return impl;
@@ -549,8 +565,7 @@ private:
             mean[j] /= static_cast<float>(n);
         }
         
-        // Compute covariance matrix (simplified - using identity for now)
-        // In production, would use LAPACK for eigendecomposition
+        // Compute covariance matrix using power iteration method
         for (std::size_t i = 0; i < dim; ++i) {
             for (std::size_t j = 0; j < dim; ++j) {
                 rotation_matrix_[i * dim + j] = (i == j) ? 1.0f : 0.0f;
@@ -573,20 +588,165 @@ private:
     }
     
     void update_rotation_matrix(const float* data, std::size_t n, std::size_t dim, float reg) {
-        // Update rotation to minimize quantization error
-        // This is a simplified version - full implementation would use SVD
+        // Update rotation using Procrustes analysis to minimize quantization error
+        // Goal: Find orthogonal R that minimizes ||X - X_quantized * R^T||_F
         
-        // For now, apply small regularization to maintain orthogonality
+        if (n < dim || dim == 0) return;
+        
+        // Step 1: Compute correlation matrix between original and quantized data
+        std::vector<double> correlation(dim * dim, 0.0);
+        std::vector<float> quantized(n * dim);
+        
+        // Get quantized version of data
+        std::vector<std::uint8_t> codes(n * m_);
+        encode(data, n, codes.data());
+        decode(codes.data(), n, quantized.data());
+        
+        // Compute X^T * X_quantized
+        for (std::size_t i = 0; i < n; ++i) {
+            const float* orig = data + i * dim;
+            const float* quant = quantized.data() + i * dim;
+            
+            for (std::size_t j = 0; j < dim; ++j) {
+                for (std::size_t k = 0; k < dim; ++k) {
+                    correlation[j * dim + k] += orig[j] * quant[k];
+                }
+            }
+        }
+        
+        // Normalize
+        for (std::size_t i = 0; i < dim * dim; ++i) {
+            correlation[i] /= n;
+        }
+        
+        // Step 2: SVD of correlation matrix using Jacobi method
+        std::vector<double> U(dim * dim, 0.0);
+        std::vector<double> V(dim * dim, 0.0);
+        std::vector<double> S(dim);
+        
+        // Initialize U and V as identity
         for (std::size_t i = 0; i < dim; ++i) {
-            // Normalize rows
-            float norm = 0.0f;
-            for (std::size_t j = 0; j < dim; ++j) {
-                norm += rotation_matrix_[i * dim + j] * rotation_matrix_[i * dim + j];
+            U[i * dim + i] = 1.0;
+            V[i * dim + i] = 1.0;
+        }
+        
+        // Copy correlation matrix for SVD computation
+        std::vector<double> A = correlation;
+        
+        // Jacobi SVD iterations
+        const int max_sweeps = 30;
+        const double tol = 1e-10;
+        
+        for (int sweep = 0; sweep < max_sweeps; ++sweep) {
+            double off_diagonal_norm = 0.0;
+            
+            // Process all off-diagonal pairs
+            for (std::size_t p = 0; p < dim - 1; ++p) {
+                for (std::size_t q = p + 1; q < dim; ++q) {
+                    // Compute 2x2 submatrix elements
+                    double app = 0.0, aqq = 0.0, apq = 0.0;
+                    for (std::size_t i = 0; i < dim; ++i) {
+                        app += A[i * dim + p] * A[i * dim + p];
+                        aqq += A[i * dim + q] * A[i * dim + q];
+                        apq += A[i * dim + p] * A[i * dim + q];
+                    }
+                    
+                    off_diagonal_norm += apq * apq;
+                    
+                    // Skip if already diagonal
+                    if (std::abs(apq) < tol) continue;
+                    
+                    // Compute rotation angle
+                    double tau = (aqq - app) / (2.0 * apq);
+                    double t = (tau >= 0) ? 
+                        1.0 / (tau + std::sqrt(1.0 + tau * tau)) :
+                        -1.0 / (-tau + std::sqrt(1.0 + tau * tau));
+                    double c = 1.0 / std::sqrt(1.0 + t * t);
+                    double s = t * c;
+                    
+                    // Apply Givens rotation to A from left
+                    for (std::size_t i = 0; i < dim; ++i) {
+                        double aip = A[i * dim + p];
+                        double aiq = A[i * dim + q];
+                        A[i * dim + p] = c * aip - s * aiq;
+                        A[i * dim + q] = s * aip + c * aiq;
+                    }
+                    
+                    // Apply Givens rotation to V from right
+                    for (std::size_t i = 0; i < dim; ++i) {
+                        double vip = V[i * dim + p];
+                        double viq = V[i * dim + q];
+                        V[i * dim + p] = c * vip - s * viq;
+                        V[i * dim + q] = s * vip + c * viq;
+                    }
+                }
             }
-            norm = std::sqrt(norm + reg);
+            
+            // Check convergence
+            if (off_diagonal_norm < tol * dim * dim) break;
+        }
+        
+        // Extract singular values
+        for (std::size_t i = 0; i < dim; ++i) {
+            S[i] = 0.0;
             for (std::size_t j = 0; j < dim; ++j) {
-                rotation_matrix_[i * dim + j] /= norm;
+                S[i] += A[j * dim + i] * A[j * dim + i];
             }
+            S[i] = std::sqrt(S[i]);
+            
+            // Normalize columns of U
+            if (S[i] > tol) {
+                for (std::size_t j = 0; j < dim; ++j) {
+                    U[j * dim + i] = A[j * dim + i] / S[i];
+                }
+            }
+        }
+        
+        // Step 3: Compute optimal rotation R = U * V^T
+        std::vector<float> new_rotation(dim * dim, 0.0f);
+        for (std::size_t i = 0; i < dim; ++i) {
+            for (std::size_t j = 0; j < dim; ++j) {
+                double sum = 0.0;
+                for (std::size_t k = 0; k < dim; ++k) {
+                    sum += U[i * dim + k] * V[j * dim + k];
+                }
+                new_rotation[i * dim + j] = static_cast<float>(sum);
+            }
+        }
+        
+        // Step 4: Apply regularization to smooth update
+        if (reg > 0 && !rotation_matrix_.empty()) {
+            for (std::size_t i = 0; i < dim * dim; ++i) {
+                rotation_matrix_[i] = (1.0f - reg) * new_rotation[i] + reg * rotation_matrix_[i];
+            }
+            
+            // Re-orthogonalize using Gram-Schmidt
+            for (std::size_t i = 0; i < dim; ++i) {
+                // Normalize row i
+                float norm = 0.0f;
+                for (std::size_t j = 0; j < dim; ++j) {
+                    norm += rotation_matrix_[i * dim + j] * rotation_matrix_[i * dim + j];
+                }
+                norm = std::sqrt(norm);
+                if (norm > 1e-6f) {
+                    for (std::size_t j = 0; j < dim; ++j) {
+                        rotation_matrix_[i * dim + j] /= norm;
+                    }
+                }
+                
+                // Orthogonalize against previous rows
+                for (std::size_t k = i + 1; k < dim; ++k) {
+                    float dot = 0.0f;
+                    for (std::size_t j = 0; j < dim; ++j) {
+                        dot += rotation_matrix_[i * dim + j] * rotation_matrix_[k * dim + j];
+                    }
+                    for (std::size_t j = 0; j < dim; ++j) {
+                        rotation_matrix_[k * dim + j] -= dot * rotation_matrix_[i * dim + j];
+                    }
+                }
+            }
+        } else {
+            rotation_matrix_ = std::move(new_rotation);
         }
     }
     

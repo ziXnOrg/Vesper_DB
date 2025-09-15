@@ -3,6 +3,8 @@
  */
 
 #include "vesper/index/index_manager.hpp"
+#include "vesper/index/rabitq_quantizer.hpp"
+#include "vesper/index/matryoshka.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -21,6 +23,11 @@ struct CostModel {
     float hnsw_log_factor{0.01f};      // O(log N)
     float ivf_linear_factor{0.001f};   // O(nprobe * posting_size)
     float diskann_io_factor{0.1f};     // O(L * disk_reads)
+    
+    // Quantization costs
+    float rabitq_speedup{4.0f};        // 4x speedup with binary quantization
+    float matryoshka_speedup{2.0f};    // 2x speedup with reduced dimensions
+    float quantization_recall_loss{0.02f}; // 2% recall loss with quantization
     
     // Recall penalties (ms per 1% recall loss)
     float recall_penalty{0.5f};

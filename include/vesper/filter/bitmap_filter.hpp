@@ -11,6 +11,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <roaring/roaring.h>
 
 #include "vesper/error.hpp"
 #include "vesper/filter_expr.hpp"
@@ -20,83 +21,110 @@ namespace vesper::filter {
 /**
  * \brief Roaring bitmap wrapper for efficient set operations
  * 
- * Note: In production, this would use the CRoaring library.
- * For now, we provide a simple implementation using std::vector<bool>
- * as a placeholder.
+ * Uses CRoaring library for memory-efficient compressed bitmaps
+ * with fast set operations. Typically achieves 10-100x compression
+ * compared to std::vector<bool>.
  */
 class RoaringBitmap {
 public:
-    RoaringBitmap() = default;
-    explicit RoaringBitmap(std::size_t size) : bitmap_(size, false), size_(size) {}
+    RoaringBitmap() : bitmap_(roaring_bitmap_create()) {}
+    
+    explicit RoaringBitmap(std::size_t /*size*/) : bitmap_(roaring_bitmap_create()) {
+        // Size hint not needed for roaring bitmaps - they grow dynamically
+    }
+    
+    ~RoaringBitmap() {
+        if (bitmap_) {
+            roaring_bitmap_free(bitmap_);
+        }
+    }
+    
+    // Move constructor
+    RoaringBitmap(RoaringBitmap&& other) noexcept : bitmap_(other.bitmap_) {
+        other.bitmap_ = nullptr;
+    }
+    
+    // Move assignment
+    RoaringBitmap& operator=(RoaringBitmap&& other) noexcept {
+        if (this != &other) {
+            if (bitmap_) {
+                roaring_bitmap_free(bitmap_);
+            }
+            bitmap_ = other.bitmap_;
+            other.bitmap_ = nullptr;
+        }
+        return *this;
+    }
+    
+    // Copy constructor
+    RoaringBitmap(const RoaringBitmap& other) 
+        : bitmap_(other.bitmap_ ? roaring_bitmap_copy(other.bitmap_) : nullptr) {}
+    
+    // Copy assignment
+    RoaringBitmap& operator=(const RoaringBitmap& other) {
+        if (this != &other) {
+            if (bitmap_) {
+                roaring_bitmap_free(bitmap_);
+            }
+            bitmap_ = other.bitmap_ ? roaring_bitmap_copy(other.bitmap_) : nullptr;
+        }
+        return *this;
+    }
     
     void add(std::uint32_t value) {
-        if (value < size_) {
-            bitmap_[value] = true;
-            cardinality_++;
+        if (bitmap_) {
+            roaring_bitmap_add(bitmap_, value);
         }
     }
     
     void add_range(std::uint32_t start, std::uint32_t end) {
-        for (std::uint32_t i = start; i < end && i < size_; ++i) {
-            if (!bitmap_[i]) {
-                bitmap_[i] = true;
-                cardinality_++;
-            }
+        if (bitmap_) {
+            roaring_bitmap_add_range_closed(bitmap_, start, end - 1);
         }
     }
     
     [[nodiscard]] bool contains(std::uint32_t value) const {
-        return value < size_ && bitmap_[value];
+        return bitmap_ && roaring_bitmap_contains(bitmap_, value);
     }
     
     [[nodiscard]] std::size_t cardinality() const {
-        return cardinality_;
+        return bitmap_ ? roaring_bitmap_get_cardinality(bitmap_) : 0;
     }
     
     [[nodiscard]] bool is_empty() const {
-        return cardinality_ == 0;
+        return !bitmap_ || roaring_bitmap_is_empty(bitmap_);
     }
     
     // Set operations
     RoaringBitmap operator&(const RoaringBitmap& other) const {
-        RoaringBitmap result(std::max(size_, other.size_));
-        std::size_t min_size = std::min(size_, other.size_);
-        
-        for (std::size_t i = 0; i < min_size; ++i) {
-            if (bitmap_[i] && other.bitmap_[i]) {
-                result.bitmap_[i] = true;
-                result.cardinality_++;
-            }
+        RoaringBitmap result;
+        if (bitmap_ && other.bitmap_) {
+            roaring_bitmap_free(result.bitmap_);
+            result.bitmap_ = roaring_bitmap_and(bitmap_, other.bitmap_);
         }
         return result;
     }
     
     RoaringBitmap operator|(const RoaringBitmap& other) const {
-        RoaringBitmap result(std::max(size_, other.size_));
-        
-        for (std::size_t i = 0; i < size_; ++i) {
-            if (bitmap_[i]) {
-                result.bitmap_[i] = true;
-                result.cardinality_++;
-            }
-        }
-        
-        for (std::size_t i = 0; i < other.size_; ++i) {
-            if (other.bitmap_[i] && !result.bitmap_[i]) {
-                result.bitmap_[i] = true;
-                result.cardinality_++;
-            }
+        RoaringBitmap result;
+        if (bitmap_ && other.bitmap_) {
+            roaring_bitmap_free(result.bitmap_);
+            result.bitmap_ = roaring_bitmap_or(bitmap_, other.bitmap_);
+        } else if (bitmap_) {
+            roaring_bitmap_free(result.bitmap_);
+            result.bitmap_ = roaring_bitmap_copy(bitmap_);
+        } else if (other.bitmap_) {
+            roaring_bitmap_free(result.bitmap_);
+            result.bitmap_ = roaring_bitmap_copy(other.bitmap_);
         }
         return result;
     }
     
     RoaringBitmap operator~() const {
-        RoaringBitmap result(size_);
-        for (std::size_t i = 0; i < size_; ++i) {
-            if (!bitmap_[i]) {
-                result.bitmap_[i] = true;
-                result.cardinality_++;
-            }
+        RoaringBitmap result;
+        if (bitmap_) {
+            roaring_bitmap_free(result.bitmap_);
+            result.bitmap_ = roaring_bitmap_flip(bitmap_, 0, roaring_bitmap_maximum(bitmap_) + 1);
         }
         return result;
     }
@@ -104,19 +132,52 @@ public:
     // Iteration support
     std::vector<std::uint32_t> to_array() const {
         std::vector<std::uint32_t> result;
-        result.reserve(cardinality_);
-        for (std::uint32_t i = 0; i < size_; ++i) {
-            if (bitmap_[i]) {
-                result.push_back(i);
-            }
+        if (bitmap_) {
+            std::size_t card = roaring_bitmap_get_cardinality(bitmap_);
+            result.resize(card);
+            roaring_bitmap_to_uint32_array(bitmap_, result.data());
+        }
+        return result;
+    }
+    
+    // Additional useful methods
+    void run_optimize() {
+        if (bitmap_) {
+            roaring_bitmap_run_optimize(bitmap_);
+        }
+    }
+    
+    [[nodiscard]] std::size_t size_in_bytes() const {
+        return bitmap_ ? roaring_bitmap_size_in_bytes(bitmap_) : 0;
+    }
+    
+    [[nodiscard]] std::size_t portable_size_in_bytes() const {
+        return bitmap_ ? roaring_bitmap_portable_size_in_bytes(bitmap_) : 0;
+    }
+    
+    // Serialization
+    auto serialize() const -> std::vector<uint8_t> {
+        if (!bitmap_) return {};
+        
+        std::size_t size = roaring_bitmap_portable_size_in_bytes(bitmap_);
+        std::vector<uint8_t> buffer(size);
+        roaring_bitmap_portable_serialize(bitmap_, reinterpret_cast<char*>(buffer.data()));
+        return buffer;
+    }
+    
+    static auto deserialize(const std::vector<uint8_t>& buffer) -> RoaringBitmap {
+        RoaringBitmap result;
+        if (!buffer.empty()) {
+            roaring_bitmap_free(result.bitmap_);
+            result.bitmap_ = roaring_bitmap_portable_deserialize_safe(
+                reinterpret_cast<const char*>(buffer.data()), buffer.size()
+            );
         }
         return result;
     }
     
 private:
-    std::vector<bool> bitmap_;
-    std::size_t size_{0};
-    std::size_t cardinality_{0};
+    roaring_bitmap_t* bitmap_{nullptr};
 };
 
 /**

@@ -21,29 +21,91 @@
 #include <vector>
 #include <optional>
 
+#include <string>
+#include <string_view>
+#include <functional>
+
 #include "vesper/error.hpp"
+#ifdef VESPER_NO_ROARING
+struct roaring_bitmap_t; // forward-declare to avoid hard dependency during fuzz builds
+#else
+#include <roaring/roaring.h>
+#endif
 
 namespace vesper::index {
+
+// Serialization format versions
+inline constexpr std::uint16_t IVFPQ_VER_MAJOR = 1;
+inline constexpr std::uint16_t IVFPQ_VER_MINOR_V10 = 0; // legacy monolithic layout
+inline constexpr std::uint16_t IVFPQ_VER_MINOR_V11 = 1; // sectioned layout (optional zstd + mmap)
+
+// Optional load mode is selected via environment variable VESPER_IVFPQ_LOAD_MMAP ("1" -> mmap when possible)
+// Save v1.1 is gated by VESPER_IVFPQ_SAVE_V11 ("1" -> write sectioned format); default remains v1.0.
+
+
+/** \brief OPQ initialization policy. */
+enum class OpqInit { Identity, PCA };
+
+/** \brief Coarse assigner selection for centroid assignment. */
+enum class CoarseAssigner { Brute, HNSW, KDTree, Projection };
+
+    /** \brief KD-tree split heuristic for centroid KD builder. */
+    enum class KdSplitHeuristic { Variance, BBoxExtent };
+
 
 /** \brief Training parameters for IVF-PQ index. */
 struct IvfPqTrainParams {
     std::uint32_t nlist{256};           /**< Number of coarse centroids */
     std::uint32_t m{8};                 /**< Number of subquantizers */
-    std::uint32_t nbits{8};              /**< Bits per subquantizer (typically 8) */
+    std::uint32_t nbits{8};             /**< Bits per subquantizer (typically 8) */
     std::uint32_t max_iter{25};         /**< Max k-means iterations */
-    float epsilon{1e-4f};                /**< Convergence threshold */
-    bool verbose{false};                 /**< Training progress output */
-    bool use_opq{false};                 /**< Enable OPQ rotation */
-    std::uint32_t opq_iter{10};          /**< OPQ optimization iterations */
-    std::uint32_t seed{42};              /**< Random seed for reproducibility */
+    float epsilon{1e-4f};               /**< Convergence threshold */
+    bool verbose{false};                /**< Training progress output */
+    bool use_opq{false};                /**< Enable OPQ rotation */
+    std::uint32_t opq_iter{10};         /**< OPQ optimization iterations */
+    std::size_t opq_sample_n{20000};    /**< Max samples for OPQ alternations (0=auto) */
+    OpqInit opq_init{OpqInit::Identity};/**< OPQ init: Identity or PCA */
+    std::uint32_t seed{42};             /**< Random seed for reproducibility */
+
+    // RaBitQ integration
+    bool use_rabitq{false};             /**< Use RaBitQ instead of standard PQ */
+    std::uint8_t rabitq_bits{1};        /**< Bits for RaBitQ (1, 4, or 8) */
+    bool rabitq_rotation{true};         /**< Apply rotation in RaBitQ */
+
+    // Coarse assignment selection (default KDTree for fast exact assignment)
+    CoarseAssigner coarse_assigner{CoarseAssigner::KDTree};
+
+    // ANN-based coarse assignment over centroids (when coarse_assigner==HNSW)
+    bool use_centroid_ann{true};               /**< Use alternative coarse assigner (ann mode). Auto-disabled for nlist < 1024 */
+    std::uint32_t centroid_ann_ef_search{96};  /**< HNSW efSearch during assignment (default 96) */
+    std::uint32_t centroid_ann_ef_construction{200}; /**< HNSW efConstruction during build (default 200) */
+    std::uint32_t centroid_ann_M{16};          /**< HNSW connectivity (M) during build (default 16) */
+    bool validate_ann_assignment{false};       /**< Sampled correctness checks vs brute-force */
+    float validate_ann_sample_rate{0.0f};      /**< Fraction [0,1] of points to validate during add() */
+    std::uint32_t centroid_ann_refine_k{96};   /**< Top-L candidates to refine with exact L2 (default 96) */
+
+    // Projection-based coarse assignment parameters (when coarse_assigner==Projection)
+    std::uint32_t projection_dim{16};          /**< Dimensionality of projection (e.g., 16 for d=128) */
+
+	    // KD-tree coarse assignment tuning (when coarse_assigner==KDTree)
+	    std::uint32_t kd_leaf_size{256};           /**< Target max leaf size during KD build (env VESPER_KD_LEAF_SIZE overrides) */
+	    bool kd_batch_assign{true};                /**< Use batched KD assignment path by default (env VESPER_KD_BATCH overrides if set) */
+	    KdSplitHeuristic kd_split{KdSplitHeuristic::Variance}; /**< Split heuristic: Variance (default) or BBoxExtent */
+
+
+    // Optional instrumentation
+    bool timings_enabled{false};               /**< If true (or if verbose), record add() timings in Stats */
 };
 
 /** \brief Search parameters for IVF-PQ index. */
 struct IvfPqSearchParams {
     std::uint32_t nprobe{8};             /**< Number of cells to search */
     std::uint32_t k{10};                 /**< Number of neighbors to return */
-    bool use_exact_rerank{false};       /**< Exact distance on shortlist */
-    std::uint32_t rerank_k{0};          /**< Size of rerank shortlist (0=auto) */
+    // Candidate pool size produced by IVF-PQ before final selection; 0 => use k
+    std::uint32_t cand_k{0};
+    // Optional exact rerank on a shortlist (computed after IVF-PQ candidate collection)
+    bool use_exact_rerank{false};
+    std::uint32_t rerank_k{0};           /**< Size of rerank shortlist (0=auto) */
 };
 
 /** \brief Statistics from training. */
@@ -57,7 +119,7 @@ struct IvfPqTrainStats {
 /** \brief Compact representation of a vector using PQ codes. */
 struct PqCode {
     std::vector<std::uint8_t> codes;     /**< Subquantizer assignments [m] */
-    
+
     auto size() const noexcept -> std::size_t { return codes.size(); }
     auto data() const noexcept -> const std::uint8_t* { return codes.data(); }
 };
@@ -79,7 +141,7 @@ public:
     /** \brief Train index on a sample of vectors.
      *
      * Learns coarse centroids and PQ codebooks from training data.
-     * 
+     *
      * \param data Training vectors [n_train x dim]
      * \param dim Vector dimensionality
      * \param n Number of training vectors
@@ -89,8 +151,8 @@ public:
      * Preconditions: n >= params.nlist; dim divisible by params.m
      * Complexity: O(nlist * n * dim * iterations)
      */
-    auto train(const float* data, std::size_t dim, std::size_t n, 
-               const IvfPqTrainParams& params) 
+    auto train(const float* data, std::size_t dim, std::size_t n,
+               const IvfPqTrainParams& params)
         -> std::expected<IvfPqTrainStats, core::error>;
 
     /** \brief Add vectors to the index.
@@ -132,6 +194,18 @@ public:
      *
      * Thread-safety: Internally parallelized
      */
+
+    // Optional user metadata (JSON blob) serialized with the index
+    // Unchecked setter (legacy): assigns as-is; save/load enforce size/structural limits.
+    void set_metadata_json(std::string_view json);
+    auto get_metadata_json() const -> std::string;
+
+    // Checked setter: enforces 64 KiB size, UTF-8, and structural caps (depth<=64, keys<=4096).
+    // Applies optional schema validator if installed via set_metadata_validator().
+    using MetadataValidator = std::function<std::expected<void, core::error>(std::string_view)>;
+    auto set_metadata_json_checked(std::string_view json) -> std::expected<void, core::error>;
+    void set_metadata_validator(MetadataValidator validator);
+
     auto search_batch(const float* queries, std::size_t n_queries,
                       const IvfPqSearchParams& params) const
         -> std::expected<std::vector<std::vector<std::pair<std::uint64_t, float>>>, core::error>;
@@ -144,8 +218,25 @@ public:
         std::size_t code_size{0};        /**< Bytes per PQ code */
         std::size_t memory_bytes{0};     /**< Total memory usage */
         float avg_list_size{0.0f};       /**< Average vectors per list */
+        // ANN coarse-assignment telemetry
+        bool ann_enabled{false};
+        std::uint64_t ann_assignments{0};
+        std::uint64_t ann_validated{0};
+        std::uint64_t ann_mismatches{0};
+        // Optional timing telemetry (populated if verbose or timings_enabled)
+        bool timings_enabled{false};
+        double t_assign_ms{0.0};         /**< Time spent in coarse assignment (ms) */
+        double t_encode_ms{0.0};         /**< Time spent in PQ encode() (ms) */
+        double t_lists_ms{0.0};          /**< Time spent appending to inverted lists (ms) */
+        // KD-tree traversal instrumentation (V1)
+        std::uint64_t kd_nodes_pushed{0};
+        std::uint64_t kd_nodes_popped{0};
+        std::uint64_t kd_leaves_scanned{0};
+        // KD timing breakdown (only populated when timings_enabled or VESPER_KD_STATS)
+        double kd_traversal_ms{0.0};
+        double kd_leaf_ms{0.0};
     };
-    
+
     auto get_stats() const noexcept -> Stats;
 
     /** \brief Check if index is trained. */
@@ -159,11 +250,11 @@ public:
 
     /** \brief Reset index completely (requires retraining). */
     auto reset() -> void;
-    
+
     /** \brief Reconstruct vectors from a specific cluster.
      *
      * Decodes PQ codes back to full vectors for a given cluster.
-     * 
+     *
      * \param cluster_id Cluster index
      * \param[out] ids Vector IDs in the cluster
      * \param[out] vectors Reconstructed vectors (flattened)
@@ -173,7 +264,7 @@ public:
                             std::vector<std::uint64_t>& ids,
                             std::vector<float>& vectors) const
         -> std::expected<void, core::error>;
-    
+
     /** \brief Reconstruct a single vector by ID.
      *
      * \param id Vector ID
@@ -181,6 +272,66 @@ public:
      */
     auto reconstruct(std::uint64_t id) const
         -> std::expected<std::vector<float>, core::error>;
+
+    /** \brief Get vector by ID (alias for reconstruct).
+     *
+     * \param id Vector ID
+     * \return Reconstructed vector or error
+     */
+    auto get_vector(std::uint64_t id) const
+        -> std::expected<std::vector<float>, core::error> {
+        return reconstruct(id);
+    }
+
+    /** \brief Get number of clusters in the index.
+     * \return Number of clusters or error
+     */
+    auto get_num_clusters() const -> std::expected<std::uint32_t, core::error>;
+
+    /** \brief Get vector dimension.
+     * \return Dimension or error
+     */
+    auto get_dimension() const -> std::expected<std::size_t, core::error>;
+
+    /** \brief Get cluster assignment for a vector.
+     * \param id Vector ID
+     * \return Cluster ID or error
+     */
+    auto get_cluster_assignment(std::uint64_t id) const
+        -> std::expected<std::uint32_t, core::error>;
+
+    /** \brief Get cluster centroid.
+     * \param cluster_id Cluster ID
+     * \return Centroid vector or error
+     */
+    auto get_cluster_centroid(std::uint32_t cluster_id) const
+        -> std::expected<std::vector<float>, core::error>;
+
+    /** \brief Update cluster centroid.
+     * \param cluster_id Cluster ID
+     * \param centroid New centroid data
+     * \return Success or error
+     */
+    auto update_cluster_centroid(std::uint32_t cluster_id, const float* centroid)
+        -> std::expected<void, core::error>;
+
+    /** \brief Reassign vector to different cluster.
+     * \param id Vector ID
+     * \param new_cluster New cluster ID
+     * \return Success or error
+     */
+    auto reassign_vector(std::uint64_t id, std::uint32_t new_cluster)
+        -> std::expected<void, core::error>;
+
+    /** \brief Compact inverted list by removing deleted entries.
+     * \param cluster_id Cluster ID
+     * \param deleted_ids Set of deleted IDs
+     * \return Success or error
+     */
+#ifndef VESPER_NO_ROARING
+    auto compact_inverted_list(std::uint32_t cluster_id, const roaring_bitmap_t* deleted_ids)
+        -> std::expected<void, core::error>;
+#endif
 
     /** \brief Serialize index to file.
      *

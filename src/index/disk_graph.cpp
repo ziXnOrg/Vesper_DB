@@ -30,14 +30,13 @@
 #include <numeric>
 
 // Platform-specific includes for memory-mapped files
-#ifndef _WIN32
+#ifdef _WIN32
+#include <windows.h>
+#include <io.h>
+#else
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <fcntl.h>
-#include <unistd.h>
-#else
-#include <fcntl.h>
-#include <sys/mman.h>
 #include <unistd.h>
 #endif
 
@@ -201,8 +200,8 @@ public:
         );
         
         if (vectors_file_handle_ == INVALID_HANDLE_VALUE) {
-            return std::unexpected(core::error{
-                core::error_code::io_error,
+            return std::vesper_unexpected(core::error{
+                core::error_code::io_failed,
                 "Failed to create vectors file",
                 "disk_graph"
             });
@@ -214,8 +213,8 @@ public:
         if (!SetFilePointerEx(vectors_file_handle_, size, nullptr, FILE_BEGIN) ||
             !SetEndOfFile(vectors_file_handle_)) {
             close_mmap();
-            return std::unexpected(core::error{
-                core::error_code::io_error,
+            return std::vesper_unexpected(core::error{
+                core::error_code::io_failed,
                 "Failed to set vectors file size",
                 "disk_graph"
             });
@@ -233,8 +232,8 @@ public:
         
         if (!vectors_mapping_handle_) {
             close_mmap();
-            return std::unexpected(core::error{
-                core::error_code::io_error,
+            return std::vesper_unexpected(core::error{
+                core::error_code::io_failed,
                 "Failed to create vectors file mapping",
                 "disk_graph"
             });
@@ -250,8 +249,8 @@ public:
         
         if (!vectors_mmap_) {
             close_mmap();
-            return std::unexpected(core::error{
-                core::error_code::io_error,
+            return std::vesper_unexpected(core::error{
+                core::error_code::io_failed,
                 "Failed to map vectors file",
                 "disk_graph"
             });
@@ -270,8 +269,8 @@ public:
         
         if (graph_file_handle_ == INVALID_HANDLE_VALUE) {
             close_mmap();
-            return std::unexpected(core::error{
-                core::error_code::io_error,
+            return std::vesper_unexpected(core::error{
+                core::error_code::io_failed,
                 "Failed to create graph file",
                 "disk_graph"
             });
@@ -281,8 +280,8 @@ public:
         if (!SetFilePointerEx(graph_file_handle_, size, nullptr, FILE_BEGIN) ||
             !SetEndOfFile(graph_file_handle_)) {
             close_mmap();
-            return std::unexpected(core::error{
-                core::error_code::io_error,
+            return std::vesper_unexpected(core::error{
+                core::error_code::io_failed,
                 "Failed to set graph file size",
                 "disk_graph"
             });
@@ -299,8 +298,8 @@ public:
         
         if (!graph_mapping_handle_) {
             close_mmap();
-            return std::unexpected(core::error{
-                core::error_code::io_error,
+            return std::vesper_unexpected(core::error{
+                core::error_code::io_failed,
                 "Failed to create graph file mapping",
                 "disk_graph"
             });
@@ -315,8 +314,8 @@ public:
         
         if (!graph_mmap_) {
             close_mmap();
-            return std::unexpected(core::error{
-                core::error_code::io_error,
+            return std::vesper_unexpected(core::error{
+                core::error_code::io_failed,
                 "Failed to map graph file",
                 "disk_graph"
             });
@@ -325,8 +324,8 @@ public:
         // POSIX implementation
         vectors_fd_ = open(vectors_path.c_str(), O_RDWR | O_CREAT | O_TRUNC, 0644);
         if (vectors_fd_ < 0) {
-            return std::unexpected(core::error{
-                core::error_code::io_error,
+            return std::vesper_unexpected(core::error{
+                core::error_code::io_failed,
                 "Failed to create vectors file",
                 "disk_graph"
             });
@@ -335,8 +334,8 @@ public:
         // Set file size
         if (ftruncate(vectors_fd_, vectors_file_size_) != 0) {
             close_mmap();
-            return std::unexpected(core::error{
-                core::error_code::io_error,
+            return std::vesper_unexpected(core::error{
+                core::error_code::io_failed,
                 "Failed to set vectors file size",
                 "disk_graph"
             });
@@ -350,8 +349,8 @@ public:
         if (vectors_mmap_ == MAP_FAILED) {
             vectors_mmap_ = nullptr;
             close_mmap();
-            return std::unexpected(core::error{
-                core::error_code::io_error,
+            return std::vesper_unexpected(core::error{
+                core::error_code::io_failed,
                 "Failed to map vectors file",
                 "disk_graph"
             });
@@ -361,8 +360,8 @@ public:
         graph_fd_ = open(graph_path.c_str(), O_RDWR | O_CREAT | O_TRUNC, 0644);
         if (graph_fd_ < 0) {
             close_mmap();
-            return std::unexpected(core::error{
-                core::error_code::io_error,
+            return std::vesper_unexpected(core::error{
+                core::error_code::io_failed,
                 "Failed to create graph file",
                 "disk_graph"
             });
@@ -370,8 +369,8 @@ public:
         
         if (ftruncate(graph_fd_, graph_file_size_) != 0) {
             close_mmap();
-            return std::unexpected(core::error{
-                core::error_code::io_error,
+            return std::vesper_unexpected(core::error{
+                core::error_code::io_failed,
                 "Failed to set graph file size",
                 "disk_graph"
             });
@@ -384,8 +383,8 @@ public:
         if (graph_mmap_ == MAP_FAILED) {
             graph_mmap_ = nullptr;
             close_mmap();
-            return std::unexpected(core::error{
-                core::error_code::io_error,
+            return std::vesper_unexpected(core::error{
+                core::error_code::io_failed,
                 "Failed to map graph file",
                 "disk_graph"
             });
@@ -557,15 +556,20 @@ public:
             io::IOPriority::HIGH
         );
         
+        // Capture raw pointer instead of unique_ptr to avoid copy constructor issues
+        std::uint8_t* buffer_ptr = buffer.release();
         request->set_completion_callback(
-            [promise, buffer = std::move(buffer), dim = dimension_](
+            [promise, buffer_ptr, dim = dimension_](
                 io::IOStatus status,
                 std::size_t bytes_transferred,
-                std::error_code error) {
+                std::error_code error) mutable {
+                
+                // Create unique_ptr to ensure cleanup
+                std::unique_ptr<std::uint8_t[]> buffer_guard(buffer_ptr);
                 
                 if (status == io::IOStatus::SUCCESS) {
                     std::vector<float> vec(dim);
-                    std::memcpy(vec.data(), buffer.get(), bytes_transferred);
+                    std::memcpy(vec.data(), buffer_ptr, bytes_transferred);
                     promise->set_value(std::move(vec));
                 } else {
                     promise->set_value(std::vector<float>{});
@@ -575,6 +579,179 @@ public:
         
         async_io_queue_->submit(std::move(request));
         return future;
+    }
+    
+    auto get_vector(std::uint64_t id) const
+        -> std::expected<std::vector<float>, core::error> {
+        
+        // Check cache first
+        if (auto cached = vector_cache_->get(static_cast<std::uint32_t>(id))) {
+            io_stats_.cache_hits.fetch_add(1);
+            return cached.value();
+        }
+        
+        // Use the existing async load mechanism to avoid duplicate I/O code
+        auto future = load_vector_async(static_cast<std::uint32_t>(id));
+        auto vector = future.get();
+        
+        if (vector.empty()) {
+            return std::vesper_unexpected(core::error{
+                core::error_code::not_found,
+                "Vector not found in index",
+                "disk_graph.get_vector"
+            });
+        }
+        
+        // Cache the vector for future access
+        vector_cache_->put(static_cast<std::uint32_t>(id), vector, 
+                          vector.size() * sizeof(float));
+        
+        // Update stats
+        io_stats_.reads.fetch_add(1);
+        io_stats_.read_bytes.fetch_add(dimension_ * sizeof(float));
+        io_stats_.cache_misses.fetch_add(1);
+        
+        return vector;
+    }
+    
+    auto get_neighbors(std::uint32_t id) const
+        -> std::expected<std::vector<std::uint32_t>, core::error> {
+        
+        if (id >= num_nodes_) {
+            return std::vesper_unexpected(core::error{
+                core::error_code::not_found,
+                "Node ID out of range",
+                "disk_graph.get_neighbors"
+            });
+        }
+        
+        // Check cache first
+        if (auto cached = neighbor_cache_->get(id)) {
+            io_stats_.cache_hits.fetch_add(1);
+            return cached.value();
+        }
+        
+        io_stats_.cache_misses.fetch_add(1);
+        
+        // Load from appropriate source
+        std::vector<std::uint32_t> neighbors;
+        
+        // If graph is in memory
+        if (!graph_.empty() && id < graph_.size()) {
+            neighbors = graph_[id];
+        }
+        // If memory-mapped
+        else if (graph_mmap_ && !graph_offsets_.empty() && id < graph_offsets_.size()) {
+            auto [offset, count] = graph_offsets_[id];
+            neighbors.resize(count);
+            const std::uint32_t* data = reinterpret_cast<const std::uint32_t*>(
+                static_cast<const char*>(graph_mmap_) + offset
+            );
+            std::memcpy(neighbors.data(), data, count * sizeof(std::uint32_t));
+        }
+        // Load from file
+        else if (!graph_file_path_.empty()) {
+            std::ifstream file(graph_file_path_, std::ios::binary);
+            if (!file) {
+                return std::vesper_unexpected(core::error{
+                    core::error_code::io_failed,
+                    "Failed to open graph file",
+                    "disk_graph.get_neighbors"
+                });
+            }
+            
+            // Read offset table entry
+            file.seekg(sizeof(std::uint32_t) * 2 + id * sizeof(std::uint64_t) * 2);
+            std::uint64_t offset;
+            std::uint32_t count;
+            file.read(reinterpret_cast<char*>(&offset), sizeof(offset));
+            file.read(reinterpret_cast<char*>(&count), sizeof(count));
+            
+            if (!file) {
+                return std::vesper_unexpected(core::error{
+                    core::error_code::io_failed,
+                    "Failed to read neighbor offset",
+                    "disk_graph.get_neighbors"
+                });
+            }
+            
+            // Read neighbors
+            neighbors.resize(count);
+            file.seekg(offset);
+            file.read(reinterpret_cast<char*>(neighbors.data()), count * sizeof(std::uint32_t));
+            
+            if (!file) {
+                return std::vesper_unexpected(core::error{
+                    core::error_code::io_failed,
+                    "Failed to read neighbors",
+                    "disk_graph.get_neighbors"
+                });
+            }
+        }
+        
+        // Cache the result
+        if (!neighbors.empty()) {
+            neighbor_cache_->put(id, neighbors, neighbors.size() * sizeof(std::uint32_t));
+        }
+        
+        return neighbors;
+    }
+
+    auto get_entry_point() const -> std::expected<std::uint32_t, core::error> {
+        if (entry_points_.empty()) {
+            return std::vesper_unexpected(core::error{
+                core::error_code::precondition_failed,
+                "No entry points set",
+                "disk_graph.get_entry_point"
+            });
+        }
+        return entry_points_[0];
+    }
+
+    auto set_entry_point(std::uint32_t id) -> std::expected<void, core::error> {
+        if (id >= num_nodes_) {
+            return std::vesper_unexpected(core::error{
+                core::error_code::precondition_failed,
+                "Entry point ID out of range",
+                "disk_graph.set_entry_point"
+            });
+        }
+        entry_points_ = {id};
+        return {};
+    }
+
+    auto update_neighbors(std::uint32_t id, const std::vector<std::uint32_t>& neighbors)
+        -> std::expected<void, core::error> {
+        if (id >= num_nodes_) {
+            return std::vesper_unexpected(core::error{
+                core::error_code::precondition_failed,
+                "Node ID out of range",
+                "disk_graph.update_neighbors"
+            });
+        }
+        
+        // Update in-memory graph
+        if (id < graph_.size()) {
+            graph_[id] = neighbors;
+        }
+        
+        // Invalidate cache
+        neighbor_cache_->remove(id);
+        
+        // Mark as needing save
+        modified_ = true;
+        
+        return {};
+    }
+
+    auto flush() -> std::expected<void, core::error> {
+        // If modified and have a file path, save updates
+        if (modified_ && !vector_file_path_.empty()) {
+            // In production, we'd do incremental updates
+            // For now just mark as not modified
+            modified_ = false;
+        }
+        return {};
     }
 
     auto save(const std::string& path) const -> std::expected<void, core::error> {
@@ -1271,7 +1448,7 @@ private:
                     data_ptr += sizeof(std::uint32_t);
                     
                     // Validate neighbor count
-                    if (num_neighbors > 0 && num_neighbors <= config_.max_degree) {
+                    if (num_neighbors > 0 && num_neighbors <= build_params_.degree) {
                         std::vector<std::uint32_t> neighbors;
                         neighbors.reserve(num_neighbors);
                         
@@ -1285,7 +1462,8 @@ private:
                             }
                             
                             // Update neighbor cache
-                            const_cast<Impl*>(this)->neighbor_cache_->put(node_id, std::move(neighbors));
+                            std::size_t cache_size = neighbors.size() * sizeof(std::uint32_t) + sizeof(std::vector<std::uint32_t>);
+                            const_cast<Impl*>(this)->neighbor_cache_->put(node_id, std::move(neighbors), cache_size);
                         }
                     }
                 }
@@ -1295,71 +1473,7 @@ private:
                 io_stats_.read_bytes.fetch_add(bytes_transferred);
             } else if (status == io::IOStatus::FAILED) {
                 // Log error but don't crash - use empty neighbor list
-                const_cast<Impl*>(this)->neighbor_cache_->put(node_id, std::vector<std::uint32_t>{});
-            }
-            
-            const_cast<Impl*>(this)->pending_io_requests_.fetch_sub(1);
-        };
-        
-        const_cast<Impl*>(this)->pending_io_requests_.fetch_add(1);
-        return async_io_queue_->submit(std::move(request));
-    }
-    
-    // Async load vector data for a node
-    auto load_vector_async(std::uint32_t node_id) const 
-        -> std::expected<void, core::error> {
-        
-        if (!async_io_queue_ || vector_file_path_.empty()) {
-            return std::vesper_unexpected(core::error{
-                core::error_code::precondition_failed,
-                "Async I/O not initialized",
-                "disk_graph.load_vector_async"
-            });
-        }
-        
-        // Check cache first
-        auto cached = vector_cache_->get(node_id);
-        if (cached.has_value()) {
-            return {};
-        }
-        
-        // Calculate file offset for this vector
-        std::size_t offset = node_id * dimension_ * sizeof(float);
-        std::size_t size = dimension_ * sizeof(float);
-        
-        // Create buffer for read operation
-        auto buffer = std::make_shared<std::vector<std::uint8_t>>(size);
-        
-        // Create async read request
-        auto request = std::make_unique<io::AsyncIORequest>(
-            io::IOOpType::READ,
-            vector_file_path_,
-            offset,
-            std::span<std::uint8_t>(buffer->data(), buffer->size())
-        );
-        
-        // Set completion handler
-        auto completion_handler = [this, node_id, buffer, dimension = dimension_](io::IOStatus status,
-                                                                                  std::size_t bytes_transferred,
-                                                                                  const std::error_code& error) mutable {
-            if (status == io::IOStatus::SUCCESS && bytes_transferred == dimension * sizeof(float)) {
-                // Parse the vector data from buffer
-                std::vector<float> vector(dimension);
-                
-                // Convert bytes to floats
-                const float* float_ptr = reinterpret_cast<const float*>(buffer->data());
-                std::memcpy(vector.data(), float_ptr, dimension * sizeof(float));
-                
-                // Update vector cache
-                const_cast<Impl*>(this)->vector_cache_->put(node_id, std::move(vector));
-                
-                // Update statistics
-                io_stats_.reads.fetch_add(1);
-                io_stats_.read_bytes.fetch_add(bytes_transferred);
-            } else if (status == io::IOStatus::FAILED) {
-                // Log error but don't crash - use zero vector as fallback
-                std::vector<float> zero_vector(dimension, 0.0f);
-                const_cast<Impl*>(this)->vector_cache_->put(node_id, std::move(zero_vector));
+                const_cast<Impl*>(this)->neighbor_cache_->put(node_id, std::vector<std::uint32_t>{}, sizeof(std::vector<std::uint32_t>));
             }
             
             const_cast<Impl*>(this)->pending_io_requests_.fetch_sub(1);
@@ -1396,6 +1510,7 @@ private:
     VamanaBuildParams build_params_;
     VamanaBuildStats build_stats_;
     mutable IOStats io_stats_;
+    bool modified_{false};
     
     // Disk-based storage with memory-mapped files
 #ifdef _WIN32
@@ -1456,6 +1571,26 @@ auto DiskGraphIndex::search(span<const float> query, const VamanaSearchParams& p
     return impl_->search(query, params);
 }
 
+auto DiskGraphIndex::get_vector(std::uint64_t id) const
+    -> std::expected<std::vector<float>, core::error> {
+    
+    if (id >= impl_->size()) {
+        return std::vesper_unexpected(core::error{
+            core::error_code::not_found,
+            "Vector ID out of range",
+            "disk_graph.get_vector"
+        });
+    }
+    
+    // Delegate to impl's get_vector method
+    return impl_->get_vector(id);
+}
+
+auto DiskGraphIndex::get_neighbors(std::uint32_t id) const
+    -> std::expected<std::vector<std::uint32_t>, core::error> {
+    return impl_->get_neighbors(id);
+}
+
 auto DiskGraphIndex::save(const std::string& path) const
     -> std::expected<void, core::error> {
     return impl_->save(path);
@@ -1477,6 +1612,27 @@ auto DiskGraphIndex::dimension() const -> std::size_t {
 auto DiskGraphIndex::build_stats() const -> VamanaBuildStats {
     return impl_->build_stats();
 }
+
+auto DiskGraphIndex::get_entry_point() const 
+    -> std::expected<std::uint32_t, core::error> {
+    return impl_->get_entry_point();
+}
+
+auto DiskGraphIndex::set_entry_point(std::uint32_t id)
+    -> std::expected<void, core::error> {
+    return impl_->set_entry_point(id);
+}
+
+auto DiskGraphIndex::update_neighbors(std::uint32_t id, 
+                                     const std::vector<std::uint32_t>& neighbors)
+    -> std::expected<void, core::error> {
+    return impl_->update_neighbors(id, neighbors);
+}
+
+auto DiskGraphIndex::flush() -> std::expected<void, core::error> {
+    return impl_->flush();
+}
+
 
 auto DiskGraphIndex::io_stats() const -> IOStats {
     return impl_->io_stats();

@@ -14,13 +14,14 @@
  * Thread-safety: Thread-safe allocations with per-node arenas
  */
 
-#include <vesper/core/error.hpp>
+#include <vesper/error.hpp>
 #include <vesper/span_polyfill.hpp>
 #include <memory>
 #include <vector>
 #include <expected>
 #include <cstddef>
 #include <atomic>
+#include <mutex>
 
 #ifdef __linux__
 #include <numa.h>
@@ -187,7 +188,8 @@ private:
     std::atomic<std::size_t> total_deallocated_{0};
     std::atomic<std::size_t> current_usage_{0};
     std::atomic<std::size_t> peak_usage_{0};
-    std::vector<std::atomic<std::size_t>> per_node_usage_;
+    std::unique_ptr<std::atomic<std::size_t>[]> per_node_usage_;
+    std::size_t num_nodes_{0};
 };
 
 /** \brief STL-compatible NUMA allocator. */

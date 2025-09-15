@@ -86,7 +86,7 @@
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
-      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include\roaring;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\cpp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalOptions>%(AdditionalOptions) /external:I "C:/Users/cisco/Desktop/dev/research/Vesper/build-release/_deps/googletest-src/googletest/include" /external:I "C:/Users/cisco/Desktop/dev/research/Vesper/build-release/_deps/googletest-src/googletest"</AdditionalOptions>
       <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
       <BasicRuntimeChecks>EnableFastChecks</BasicRuntimeChecks>
@@ -113,10 +113,10 @@
     </ClCompile>
     <ResourceCompile>
       <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_DEBUG;_WINDOWS;VESPER_ENABLE_KERNEL_DISPATCH=0;VESPER_ENABLE_ACCELERATE=0;VESPER_SERIALIZE_BASE_LAYER=1;VESPER_PARTITIONED_BASE_LOCKS=0;VESPER_EXPERIMENTAL_WORK_STEALING=0;CMAKE_INTDIR=\"Debug\"</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\googletest-src\googletest\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\googletest-src\googletest;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include\roaring;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\cpp;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\googletest-src\googletest\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\googletest-src\googletest;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ResourceCompile>
     <Midl>
-      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\googletest-src\googletest\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\googletest-src\googletest;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include\roaring;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\cpp;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\googletest-src\googletest\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\googletest-src\googletest;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
       <HeaderFileName>%(Filename).h</HeaderFileName>
       <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
@@ -136,7 +136,7 @@ exit /b %1
 if %errorlevel% neq 0 goto :VCEnd</Command>
     </PostBuildEvent>
     <Link>
-      <AdditionalDependencies>Debug\vesper_core.lib;lib\Debug\gtest_main.lib;lib\Debug\gtest.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
+      <AdditionalDependencies>Debug\vesper_core.lib;lib\Debug\gtest_main.lib;_deps\croaring-build\src\Debug\roaring.lib;lib\Debug\gtest.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
       <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
       <DataExecutionPrevention></DataExecutionPrevention>
@@ -155,7 +155,7 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
-      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include\roaring;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\cpp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalOptions>%(AdditionalOptions) /external:I "C:/Users/cisco/Desktop/dev/research/Vesper/build-release/_deps/googletest-src/googletest/include" /external:I "C:/Users/cisco/Desktop/dev/research/Vesper/build-release/_deps/googletest-src/googletest"</AdditionalOptions>
       <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
       <BasicRuntimeChecks>Default</BasicRuntimeChecks>
@@ -183,10 +183,10 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
     </ClCompile>
     <ResourceCompile>
       <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;VESPER_ENABLE_KERNEL_DISPATCH=0;VESPER_ENABLE_ACCELERATE=0;VESPER_SERIALIZE_BASE_LAYER=1;VESPER_PARTITIONED_BASE_LOCKS=0;VESPER_EXPERIMENTAL_WORK_STEALING=0;CMAKE_INTDIR=\"Release\"</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\googletest-src\googletest\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\googletest-src\googletest;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include\roaring;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\cpp;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\googletest-src\googletest\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\googletest-src\googletest;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ResourceCompile>
     <Midl>
-      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\googletest-src\googletest\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\googletest-src\googletest;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include\roaring;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\cpp;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\googletest-src\googletest\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\googletest-src\googletest;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
       <HeaderFileName>%(Filename).h</HeaderFileName>
       <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
@@ -206,7 +206,7 @@ exit /b %1
 if %errorlevel% neq 0 goto :VCEnd</Command>
     </PostBuildEvent>
     <Link>
-      <AdditionalDependencies>Release\vesper_core.lib;lib\Release\gtest_main.lib;lib\Release\gtest.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
+      <AdditionalDependencies>Release\vesper_core.lib;lib\Release\gtest_main.lib;_deps\croaring-build\src\Release\roaring.lib;lib\Release\gtest.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
       <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
       <DataExecutionPrevention></DataExecutionPrevention>
@@ -225,7 +225,7 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">
     <ClCompile>
-      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include\roaring;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\cpp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalOptions>%(AdditionalOptions) /external:I "C:/Users/cisco/Desktop/dev/research/Vesper/build-release/_deps/googletest-src/googletest/include" /external:I "C:/Users/cisco/Desktop/dev/research/Vesper/build-release/_deps/googletest-src/googletest"</AdditionalOptions>
       <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
       <BasicRuntimeChecks>Default</BasicRuntimeChecks>
@@ -253,10 +253,10 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
     </ClCompile>
     <ResourceCompile>
       <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;VESPER_ENABLE_KERNEL_DISPATCH=0;VESPER_ENABLE_ACCELERATE=0;VESPER_SERIALIZE_BASE_LAYER=1;VESPER_PARTITIONED_BASE_LOCKS=0;VESPER_EXPERIMENTAL_WORK_STEALING=0;CMAKE_INTDIR=\"MinSizeRel\"</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\googletest-src\googletest\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\googletest-src\googletest;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include\roaring;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\cpp;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\googletest-src\googletest\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\googletest-src\googletest;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ResourceCompile>
     <Midl>
-      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\googletest-src\googletest\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\googletest-src\googletest;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include\roaring;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\cpp;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\googletest-src\googletest\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\googletest-src\googletest;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
       <HeaderFileName>%(Filename).h</HeaderFileName>
       <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
@@ -276,7 +276,7 @@ exit /b %1
 if %errorlevel% neq 0 goto :VCEnd</Command>
     </PostBuildEvent>
     <Link>
-      <AdditionalDependencies>MinSizeRel\vesper_core.lib;lib\MinSizeRel\gtest_main.lib;lib\MinSizeRel\gtest.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
+      <AdditionalDependencies>MinSizeRel\vesper_core.lib;lib\MinSizeRel\gtest_main.lib;_deps\croaring-build\src\MinSizeRel\roaring.lib;lib\MinSizeRel\gtest.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
       <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
       <DataExecutionPrevention></DataExecutionPrevention>
@@ -295,7 +295,7 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">
     <ClCompile>
-      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include\roaring;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\cpp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalOptions>%(AdditionalOptions) /external:I "C:/Users/cisco/Desktop/dev/research/Vesper/build-release/_deps/googletest-src/googletest/include" /external:I "C:/Users/cisco/Desktop/dev/research/Vesper/build-release/_deps/googletest-src/googletest"</AdditionalOptions>
       <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
       <BasicRuntimeChecks>Default</BasicRuntimeChecks>
@@ -322,10 +322,10 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
     </ClCompile>
     <ResourceCompile>
       <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;VESPER_ENABLE_KERNEL_DISPATCH=0;VESPER_ENABLE_ACCELERATE=0;VESPER_SERIALIZE_BASE_LAYER=1;VESPER_PARTITIONED_BASE_LOCKS=0;VESPER_EXPERIMENTAL_WORK_STEALING=0;CMAKE_INTDIR=\"RelWithDebInfo\"</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\googletest-src\googletest\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\googletest-src\googletest;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include\roaring;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\cpp;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\googletest-src\googletest\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\googletest-src\googletest;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ResourceCompile>
     <Midl>
-      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\googletest-src\googletest\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\googletest-src\googletest;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include\roaring;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\cpp;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\googletest-src\googletest\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\googletest-src\googletest;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
       <HeaderFileName>%(Filename).h</HeaderFileName>
       <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
@@ -345,7 +345,7 @@ exit /b %1
 if %errorlevel% neq 0 goto :VCEnd</Command>
     </PostBuildEvent>
     <Link>
-      <AdditionalDependencies>RelWithDebInfo\vesper_core.lib;lib\RelWithDebInfo\gtest_main.lib;lib\RelWithDebInfo\gtest.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
+      <AdditionalDependencies>RelWithDebInfo\vesper_core.lib;lib\RelWithDebInfo\gtest_main.lib;_deps\croaring-build\src\RelWithDebInfo\roaring.lib;lib\RelWithDebInfo\gtest.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
       <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
       <DataExecutionPrevention></DataExecutionPrevention>
@@ -437,6 +437,10 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
     <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\googletest-build\googletest\gtest_main.vcxproj">
       <Project>{FF6B440F-AB08-345A-B28C-EE51EE7334D0}</Project>
       <Name>gtest_main</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-build\src\roaring.vcxproj">
+      <Project>{4A20D676-2578-3E94-BC40-5C19EBACFCE1}</Project>
+      <Name>roaring</Name>
     </ProjectReference>
     <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\vesper_core.vcxproj">
       <Project>{EA378651-CB3E-3044-96DF-4F78689FA8E4}</Project>

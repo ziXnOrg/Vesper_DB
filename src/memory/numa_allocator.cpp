@@ -25,7 +25,7 @@ auto NumaTopology::detect() -> std::expected<std::unique_ptr<NumaTopology>, core
     auto topology = std::unique_ptr<NumaTopology>(new NumaTopology());
     
     if (auto result = topology->init(); !result) {
-        return std::unexpected(result.error());
+        return std::vesper_unexpected(result.error());
     }
     
     return topology;
@@ -105,8 +105,8 @@ auto NumaTopology::init() -> std::expected<void, core::error> {
     }
     
     if (nodes_.empty()) {
-        return std::unexpected(error{
-            error_code::internal_error,
+        return std::vesper_unexpected(core::error{
+            core::error_code::internal,
             "No NUMA nodes detected",
             "numa"
         });
@@ -236,15 +236,67 @@ NumaAllocator::NumaAllocator(const NumaConfig& config) : config_(config) {}
 
 NumaAllocator::~NumaAllocator() = default;
 
-NumaAllocator::NumaAllocator(NumaAllocator&&) noexcept = default;
-NumaAllocator& NumaAllocator::operator=(NumaAllocator&&) noexcept = default;
+NumaAllocator::NumaAllocator(NumaAllocator&& other) noexcept
+    : config_(std::move(other.config_))
+    , topology_(std::move(other.topology_))
+    , total_allocated_(other.total_allocated_.load())
+    , total_deallocated_(other.total_deallocated_.load())
+    , current_usage_(other.current_usage_.load())
+    , peak_usage_(other.peak_usage_.load()) {
+    // Manually move per_node_usage_ (array of atomics)
+    num_nodes_ = other.num_nodes_;
+    if (num_nodes_ > 0) {
+        per_node_usage_ = std::make_unique<std::atomic<std::size_t>[]>(num_nodes_);
+        for (size_t i = 0; i < num_nodes_; ++i) {
+            per_node_usage_[i].store(other.per_node_usage_[i].load());
+            other.per_node_usage_[i].store(0);
+        }
+    }
+    other.num_nodes_ = 0;
+    // Reset other's atomics to zero
+    other.total_allocated_.store(0);
+    other.total_deallocated_.store(0);
+    other.current_usage_.store(0);
+    other.peak_usage_.store(0);
+}
+
+NumaAllocator& NumaAllocator::operator=(NumaAllocator&& other) noexcept {
+    if (this != &other) {
+        config_ = std::move(other.config_);
+        topology_ = std::move(other.topology_);
+        total_allocated_.store(other.total_allocated_.load());
+        total_deallocated_.store(other.total_deallocated_.load());
+        current_usage_.store(other.current_usage_.load());
+        peak_usage_.store(other.peak_usage_.load());
+        
+        // Manually move per_node_usage_ (array of atomics)
+        num_nodes_ = other.num_nodes_;
+        if (num_nodes_ > 0) {
+            per_node_usage_ = std::make_unique<std::atomic<std::size_t>[]>(num_nodes_);
+            for (size_t i = 0; i < num_nodes_; ++i) {
+                per_node_usage_[i].store(other.per_node_usage_[i].load());
+                other.per_node_usage_[i].store(0);
+            }
+        } else {
+            per_node_usage_.reset();
+        }
+        other.num_nodes_ = 0;
+        
+        // Reset other's atomics to zero
+        other.total_allocated_.store(0);
+        other.total_deallocated_.store(0);
+        other.current_usage_.store(0);
+        other.peak_usage_.store(0);
+    }
+    return *this;
+}
 
 auto NumaAllocator::create(const NumaConfig& config)
     -> std::expected<std::unique_ptr<NumaAllocator>, core::error> {
     auto allocator = std::unique_ptr<NumaAllocator>(new NumaAllocator(config));
     
     if (auto result = allocator->init(); !result) {
-        return std::unexpected(result.error());
+        return std::vesper_unexpected(result.error());
     }
     
     return allocator;
@@ -257,12 +309,18 @@ auto NumaAllocator::init() -> std::expected<void, core::error> {
     // Initialize topology
     auto topology = NumaTopology::detect();
     if (!topology) {
-        return std::unexpected(topology.error());
+        return std::vesper_unexpected(topology.error());
     }
     topology_ = std::move(topology.value());
     
     // Initialize per-node statistics
-    per_node_usage_.resize(topology_->num_nodes());
+    num_nodes_ = topology_->num_nodes();
+    if (num_nodes_ > 0) {
+        per_node_usage_ = std::make_unique<std::atomic<std::size_t>[]>(num_nodes_);
+        for (std::size_t i = 0; i < num_nodes_; ++i) {
+            per_node_usage_[i].store(0);
+        }
+    }
     
     return {};
 }
@@ -365,8 +423,8 @@ auto NumaAllocator::allocate(std::size_t size)
 #endif
     
     if (!ptr) {
-        return std::unexpected(error{
-            error_code::out_of_memory,
+        return std::vesper_unexpected(core::error{
+            core::error_code::out_of_memory,
             "Failed to allocate " + std::to_string(size) + " bytes",
             "numa"
         });
@@ -384,7 +442,7 @@ auto NumaAllocator::allocate(std::size_t size)
     
     // Update per-node usage
     std::uint32_t node = topology_->current_node();
-    if (node < per_node_usage_.size()) {
+    if (node < num_nodes_ && per_node_usage_) {
         per_node_usage_[node].fetch_add(size, std::memory_order_relaxed);
     }
     
@@ -402,8 +460,8 @@ auto NumaAllocator::allocate_aligned(std::size_t size, std::size_t alignment)
     
     // Ensure alignment is power of 2
     if (alignment & (alignment - 1)) {
-        return std::unexpected(error{
-            error_code::invalid_argument,
+        return std::vesper_unexpected(core::error{
+            core::error_code::invalid_argument,
             "Alignment must be power of 2",
             "numa"
         });
@@ -434,8 +492,8 @@ auto NumaAllocator::allocate_on_node(std::size_t size, std::uint32_t node)
     }
     
     if (node >= topology_->num_nodes()) {
-        return std::unexpected(error{
-            error_code::invalid_argument,
+        return std::vesper_unexpected(core::error{
+            core::error_code::invalid_argument,
             "Invalid NUMA node: " + std::to_string(node),
             "numa"
         });
@@ -463,8 +521,8 @@ auto NumaAllocator::allocate_on_node(std::size_t size, std::uint32_t node)
 #endif
     
     if (!ptr) {
-        return std::unexpected(error{
-            error_code::out_of_memory,
+        return std::vesper_unexpected(core::error{
+            core::error_code::out_of_memory,
             "Failed to allocate on node " + std::to_string(node),
             "numa"
         });
@@ -474,7 +532,7 @@ auto NumaAllocator::allocate_on_node(std::size_t size, std::uint32_t node)
     total_allocated_.fetch_add(size, std::memory_order_relaxed);
     current_usage_.fetch_add(size, std::memory_order_relaxed);
     
-    if (node < per_node_usage_.size()) {
+    if (node < num_nodes_ && per_node_usage_) {
         per_node_usage_[node].fetch_add(size, std::memory_order_relaxed);
     }
     
@@ -506,9 +564,9 @@ auto NumaAllocator::deallocate(void* ptr, std::size_t size) noexcept -> void {
     
     // Update per-node usage (approximate - we don't track which node)
     std::uint32_t node = topology_->current_node();
-    if (node < per_node_usage_.size()) {
+    if (node < num_nodes_ && per_node_usage_) {
         per_node_usage_[node].fetch_sub(
-            std::min(size, per_node_usage_[node].load(std::memory_order_relaxed)),
+            (std::min)(size, per_node_usage_[node].load(std::memory_order_relaxed)),
             std::memory_order_relaxed
         );
     }
@@ -524,8 +582,8 @@ auto NumaAllocator::migrate(void* ptr, std::size_t size, std::uint32_t node)
     }
     
     if (node >= topology_->num_nodes()) {
-        return std::unexpected(error{
-            error_code::invalid_argument,
+        return std::vesper_unexpected(core::error{
+            core::error_code::invalid_argument,
             "Invalid NUMA node: " + std::to_string(node),
             "numa"
         });
@@ -537,8 +595,8 @@ auto NumaAllocator::migrate(void* ptr, std::size_t size, std::uint32_t node)
         unsigned long nodemask = 1UL << node;
         if (mbind(ptr, size, MPOL_BIND, &nodemask, sizeof(nodemask) * 8,
                   MPOL_MF_MOVE | MPOL_MF_STRICT) < 0) {
-            return std::unexpected(error{
-                error_code::io_error,
+            return std::vesper_unexpected(core::error{
+                core::error_code::io_error,
                 "Failed to migrate memory: " + std::string(std::strerror(errno)),
                 "numa"
             });
@@ -573,8 +631,10 @@ auto NumaAllocator::get_stats() const noexcept -> Stats {
     stats.current_usage = current_usage_.load(std::memory_order_relaxed);
     stats.peak_usage = peak_usage_.load(std::memory_order_relaxed);
     
-    for (const auto& usage : per_node_usage_) {
-        stats.per_node_usage.push_back(usage.load(std::memory_order_relaxed));
+    if (per_node_usage_) {
+        for (std::size_t i = 0; i < num_nodes_; ++i) {
+            stats.per_node_usage.push_back(per_node_usage_[i].load(std::memory_order_relaxed));
+        }
     }
     
     return stats;
@@ -594,8 +654,8 @@ auto ThreadAffinity::bind_to_node(std::uint32_t node)
         
         if (numa_run_on_node_mask(mask) < 0) {
             numa_free_nodemask(mask);
-            return std::unexpected(error{
-                error_code::io_error,
+            return std::vesper_unexpected(core::error{
+                core::error_code::io_error,
                 "Failed to bind to node: " + std::string(std::strerror(errno)),
                 "numa"
             });
@@ -610,8 +670,8 @@ auto ThreadAffinity::bind_to_node(std::uint32_t node)
         GROUP_AFFINITY affinity;
         if (GetNumaNodeProcessorMaskEx(static_cast<USHORT>(node), &affinity)) {
             if (!SetThreadGroupAffinity(GetCurrentThread(), &affinity, nullptr)) {
-                return std::unexpected(error{
-                    error_code::io_error,
+                return std::vesper_unexpected(core::error{
+                    core::error_code::io_error,
                     "Failed to bind to node",
                     "numa"
                 });
@@ -641,8 +701,8 @@ auto ThreadAffinity::bind_to_cpus(std::span<const std::uint32_t> cpus)
     }
     
     if (sched_setaffinity(0, sizeof(cpuset), &cpuset) < 0) {
-        return std::unexpected(error{
-            error_code::io_error,
+        return std::vesper_unexpected(core::error{
+            core::error_code::io_error,
             "Failed to set CPU affinity: " + std::string(std::strerror(errno)),
             "numa"
         });
@@ -657,8 +717,8 @@ auto ThreadAffinity::bind_to_cpus(std::span<const std::uint32_t> cpus)
     }
     
     if (!SetThreadAffinityMask(GetCurrentThread(), mask)) {
-        return std::unexpected(error{
-            error_code::io_error,
+        return std::vesper_unexpected(core::error{
+            core::error_code::io_error,
             "Failed to set CPU affinity",
             "numa"
         });
@@ -701,7 +761,7 @@ auto NumaAllocatorPool::get_for_node(std::uint32_t node, const NumaConfig& confi
     if (!allocators_[node]) {
         auto allocator = NumaAllocator::create(config);
         if (!allocator) {
-            return std::unexpected(allocator.error());
+            return std::vesper_unexpected(allocator.error());
         }
         allocators_[node] = std::move(allocator.value());
     }
@@ -713,7 +773,7 @@ auto NumaAllocatorPool::get_local(const NumaConfig& config)
     -> std::expected<NumaAllocator*, core::error> {
     auto topology = NumaTopology::detect();
     if (!topology) {
-        return std::unexpected(topology.error());
+        return std::vesper_unexpected(topology.error());
     }
     
     std::uint32_t node = topology.value()->current_node();

@@ -182,6 +182,10 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
       <Project>{8bd3552a-2cfb-4a59-ab15-2031b97ada1e}</Project>
       <Name>Catch2WithMain</Name>
     </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\accuracy_test.vcxproj">
+      <Project>{E16ECBAB-BBFE-3B59-89B2-262579FBE685}</Project>
+      <Name>accuracy_test</Name>
+    </ProjectReference>
     <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\gbench-build\src\benchmark.vcxproj">
       <Project>{B3BF85A0-3555-38B8-A4FE-3CB0F30CF18B}</Project>
       <Name>benchmark</Name>
@@ -189,6 +193,10 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
     <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\gbench-build\src\benchmark_main.vcxproj">
       <Project>{C1402A9B-BD83-3CCC-828A-262FD38423D3}</Project>
       <Name>benchmark_main</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\bruteforce_verifier_test.vcxproj">
+      <Project>{1AFD442F-3513-35D0-9B85-48A176E0ABA0}</Project>
+      <Name>bruteforce_verifier_test</Name>
     </ProjectReference>
     <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\connectivity_smoke.vcxproj">
       <Project>{BDF2982C-DB08-31E1-932B-894CC9F8A4CF}</Project>
@@ -210,6 +218,10 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
       <Project>{FF6B440F-AB08-345A-B28C-EE51EE7334D0}</Project>
       <Name>gtest_main</Name>
     </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\hnsw_basic_invariant_test.vcxproj">
+      <Project>{592D4E6F-BE75-3937-8294-07B6A53AA422}</Project>
+      <Name>hnsw_basic_invariant_test</Name>
+    </ProjectReference>
     <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\hnsw_connectivity_test.vcxproj">
       <Project>{31CE80F8-31F3-3DF7-917C-DCDA037EA5BE}</Project>
       <Name>hnsw_connectivity_test</Name>
@@ -226,6 +238,50 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
       <Project>{7154859F-460C-39B3-BCBF-477CA87330C9}</Project>
       <Name>integration_test</Name>
     </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\ivfpq_add_bench.vcxproj">
+      <Project>{6314CD72-B4D4-3BF7-9776-B5C952493F37}</Project>
+      <Name>ivfpq_add_bench</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\ivfpq_compat_matrix_test.vcxproj">
+      <Project>{2605CC04-274E-3673-8CA1-BDB1B1210718}</Project>
+      <Name>ivfpq_compat_matrix_test</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\ivfpq_fuzz_robust_test.vcxproj">
+      <Project>{3A640B7A-8D65-3078-99F7-F4FB4D637AA1}</Project>
+      <Name>ivfpq_fuzz_robust_test</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\ivfpq_persist_bench.vcxproj">
+      <Project>{C86C98A4-311E-3C2C-A3DD-CB8B4D045CC3}</Project>
+      <Name>ivfpq_persist_bench</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\ivfpq_serialize_roundtrip_test.vcxproj">
+      <Project>{16F492C4-0748-3257-96F2-1C729C4E290B}</Project>
+      <Name>ivfpq_serialize_roundtrip_test</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\ivfpq_sweep_test.vcxproj">
+      <Project>{0571C3D0-6EDF-3D13-A23F-F9D9288CBA3F}</Project>
+      <Name>ivfpq_sweep_test</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\ivfpq_v11_error_handling_test.vcxproj">
+      <Project>{EA212586-1DDE-39EB-8B0B-B509B6A2C16C}</Project>
+      <Name>ivfpq_v11_error_handling_test</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\ivfpq_v11_metadata_limits_test.vcxproj">
+      <Project>{410778D6-5E36-3B49-9F1B-A5EF7BF069B9}</Project>
+      <Name>ivfpq_v11_metadata_limits_test</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\ivfpq_v11_metadata_test.vcxproj">
+      <Project>{FA5B7CF6-101F-31FF-A139-BFE72DDF96A6}</Project>
+      <Name>ivfpq_v11_metadata_test</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\ivfpq_v11_serialize_test.vcxproj">
+      <Project>{31E9A72B-5F18-349B-8D82-A511D5F2DC2B}</Project>
+      <Name>ivfpq_v11_serialize_test</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\ivfpq_v11_stream_position_test.vcxproj">
+      <Project>{C1ADF0B0-0446-3E76-804F-E0919D38F839}</Project>
+      <Name>ivfpq_v11_stream_position_test</Name>
+    </ProjectReference>
     <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\kmeans_test.vcxproj">
       <Project>{5FEAE2D7-42DA-3056-8963-4CC6F7549C9A}</Project>
       <Name>kmeans_test</Name>
@@ -233,6 +289,10 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
     <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\multi_index_test.vcxproj">
       <Project>{73ABD488-1EE7-31AE-8C74-DD8B3A9ED432}</Project>
       <Name>multi_index_test</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\performance_test.vcxproj">
+      <Project>{5021FC02-D366-31B5-8A52-1EBBE3EFAF69}</Project>
+      <Name>performance_test</Name>
     </ProjectReference>
     <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-build\src\roaring.vcxproj">
       <Project>{4A20D676-2578-3E94-BC40-5C19EBACFCE1}</Project>
@@ -242,9 +302,9 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
       <Project>{43961550-0992-3426-96DE-266975D77153}</Project>
       <Name>simd_kernels_test</Name>
     </ProjectReference>
-    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\stress_test.vcxproj">
-      <Project>{8A61E356-80F6-30A0-8476-718A91CB793C}</Project>
-      <Name>stress_test</Name>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\test_hierarchical_kd.vcxproj">
+      <Project>{5D1EDFA1-764B-33B3-ADBF-026891C6E3B6}</Project>
+      <Name>test_hierarchical_kd</Name>
     </ProjectReference>
     <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\test_hnsw_batch.vcxproj">
       <Project>{7E8E557F-C0AB-3A3E-80AF-F7B8F8725776}</Project>
@@ -262,21 +322,57 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
       <Project>{E8390C6F-4653-33E1-8B38-94E013C36973}</Project>
       <Name>vesper_bench_fused_vs_materialized</Name>
     </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\vesper_bench_hybrid.vcxproj">
+      <Project>{7A1FB486-B3E8-349A-B421-FC59D5539E59}</Project>
+      <Name>vesper_bench_hybrid</Name>
+    </ProjectReference>
     <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\vesper_bench_index.vcxproj">
       <Project>{B54EA117-0805-3ECB-8F52-AB283B1DC65E}</Project>
       <Name>vesper_bench_index</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\vesper_bench_ivfpq_adc.vcxproj">
+      <Project>{4517BB06-A118-39D5-B449-E46C355A61E1}</Project>
+      <Name>vesper_bench_ivfpq_adc</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\vesper_bench_ivfpq_load.vcxproj">
+      <Project>{D7A11170-918F-3623-B4EC-C02C172BC155}</Project>
+      <Name>vesper_bench_ivfpq_load</Name>
     </ProjectReference>
     <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\vesper_bench_simd.vcxproj">
       <Project>{F64FAE1B-742F-37FF-8F96-142EF5BFD4E0}</Project>
       <Name>vesper_bench_simd</Name>
     </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\vesper_c.vcxproj">
+      <Project>{4CA1558F-8F74-37CD-AB00-A1126A26D366}</Project>
+      <Name>vesper_c</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\vesper_c_example.vcxproj">
+      <Project>{264AA8DE-A4DC-3805-BC87-D07BE3E12FA5}</Project>
+      <Name>vesper_c_example</Name>
+    </ProjectReference>
     <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\vesper_core.vcxproj">
       <Project>{EA378651-CB3E-3044-96DF-4F78689FA8E4}</Project>
       <Name>vesper_core</Name>
     </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\vesper_e2e_runner.vcxproj">
+      <Project>{014CA201-8CA3-3186-A28B-017F903F72EE}</Project>
+      <Name>vesper_e2e_runner</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\vesper_full_benchmark.vcxproj">
+      <Project>{3B7AC961-8FBD-3186-B485-65DB7119E0A6}</Project>
+      <Name>vesper_full_benchmark</Name>
+    </ProjectReference>
     <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\vesper_headers_check.vcxproj">
       <Project>{2319E844-2B68-3FFF-BD24-EA30BC230DD7}</Project>
       <Name>vesper_headers_check</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\vesper_integration_test.vcxproj">
+      <Project>{53F904AB-5F45-3A99-A3C2-9A8F1CBC607A}</Project>
+      <Name>vesper_integration_test</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\vesper_manager_example.vcxproj">
+      <Project>{D237DB90-344F-380E-A55B-2F27FF99A135}</Project>
+      <Name>vesper_manager_example</Name>
     </ProjectReference>
     <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\vesper_tests.vcxproj">
       <Project>{BECF3940-3761-36F8-9D93-832CA8770566}</Project>

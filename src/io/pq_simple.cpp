@@ -22,7 +22,7 @@ auto SimplePq::train(const float* data, std::size_t n, std::size_t dim)
     -> std::expected<void, core::error> {
     using core::error;
     using core::error_code;
-    
+
     if (dim % m_ != 0) {
         return std::vesper_unexpected(error{
             error_code::precondition_failed,
@@ -30,7 +30,7 @@ auto SimplePq::train(const float* data, std::size_t n, std::size_t dim)
             "pq_simple"
         });
     }
-    
+
     if (n < ksub_ * m_) {
         return std::vesper_unexpected(error{
             error_code::precondition_failed,
@@ -38,23 +38,23 @@ auto SimplePq::train(const float* data, std::size_t n, std::size_t dim)
             "pq_simple"
         });
     }
-    
+
     dsub_ = dim / m_;
-    
+
     // Allocate codebooks
     codebooks_ = std::make_unique<AlignedCentroidBuffer>(m_ * ksub_, dsub_);
-    
+
     // Train each subquantizer independently
     for (std::uint32_t sq = 0; sq < m_; ++sq) {
         // Extract subvectors for this subquantizer
         std::vector<float> subvectors(n * dsub_);
-        
+
         for (std::size_t i = 0; i < n; ++i) {
             std::copy(data + i * dim + sq * dsub_,
                      data + i * dim + (sq + 1) * dsub_,
                      subvectors.data() + i * dsub_);
         }
-        
+
         // Run k-means on subvectors
         KmeansParams params{
             .k = ksub_,
@@ -62,7 +62,7 @@ auto SimplePq::train(const float* data, std::size_t n, std::size_t dim)
             .epsilon = 1e-4f,
             .seed = 42 + sq
         };
-        
+
         auto result = kmeans_cluster(subvectors.data(), n, dsub_, params);
         if (!result.has_value()) {
             return std::vesper_unexpected(error{
@@ -71,7 +71,7 @@ auto SimplePq::train(const float* data, std::size_t n, std::size_t dim)
                 "pq_simple"
             });
         }
-        
+
         // Copy centroids to codebook
         for (std::uint32_t c = 0; c < ksub_; ++c) {
             auto* dst = codebooks_->data() + (sq * ksub_ + c) * dsub_;
@@ -79,38 +79,38 @@ auto SimplePq::train(const float* data, std::size_t n, std::size_t dim)
             std::copy(src, src + dsub_, dst);
         }
     }
-    
+
     trained_ = true;
     return {};
 }
 
 auto SimplePq::encode(const float* data, std::size_t n, std::uint8_t* codes) const -> void {
     if (!trained_) return;
-    
+
     const auto& ops = kernels::select_backend_auto();
-    
+
     for (std::size_t i = 0; i < n; ++i) {
         for (std::uint32_t sq = 0; sq < m_; ++sq) {
             // Find nearest centroid for this subvector
             const float* subvec = data + i * (m_ * dsub_) + sq * dsub_;
-            
+
             float min_dist = std::numeric_limits<float>::max();
             std::uint8_t best_idx = 0;
-            
+
             for (std::uint32_t c = 0; c < ksub_; ++c) {
                 const float* centroid = codebooks_->data() + (sq * ksub_ + c) * dsub_;
-                
+
                 float dist = ops.l2_sq(
                     std::span(subvec, dsub_),
                     std::span(centroid, dsub_)
                 );
-                
+
                 if (dist < min_dist) {
                     min_dist = dist;
                     best_idx = static_cast<std::uint8_t>(c);
                 }
             }
-            
+
             codes[i * m_ + sq] = best_idx;
         }
     }
@@ -118,39 +118,61 @@ auto SimplePq::encode(const float* data, std::size_t n, std::uint8_t* codes) con
 
 auto SimplePq::compute_lookup_tables(const float* query) const -> AlignedCentroidBuffer {
     AlignedCentroidBuffer tables(m_, ksub_);
-    
+
     if (!trained_) return tables;
-    
+
     const auto& ops = kernels::select_backend_auto();
-    
+
     for (std::uint32_t sq = 0; sq < m_; ++sq) {
         const float* subquery = query + sq * dsub_;
-        
+
         for (std::uint32_t c = 0; c < ksub_; ++c) {
             const float* centroid = codebooks_->data() + (sq * ksub_ + c) * dsub_;
-            
+
             // Compute L2 distance between subquery and centroid
             float dist = ops.l2_sq(
                 std::span(subquery, dsub_),
                 std::span(centroid, dsub_)
             );
-            
+
             tables[sq][c] = dist;
         }
     }
-    
+
     return tables;
 }
 
 auto SimplePq::compute_distance(const std::uint8_t* codes, const float* tables) const -> float {
     float dist = 0.0f;
-    
+
     for (std::uint32_t sq = 0; sq < m_; ++sq) {
         std::uint8_t code = codes[sq];
         dist += tables[sq * ksub_ + code];
     }
-    
+
     return dist;
 }
 
 } // namespace vesper::index
+
+auto SimplePq::export_codebooks(std::vector<float>& out) const -> void {
+    out.clear();
+    const std::size_t k = static_cast<std::size_t>(m_) * static_cast<std::size_t>(ksub_);
+    out.resize(k * dsub_);
+    if (!codebooks_) return;
+    for (std::size_t i = 0; i < k; ++i) {
+        const float* src = codebooks_->data() + i * dsub_;
+        std::memcpy(out.data() + i * dsub_, src, dsub_ * sizeof(float));
+    }
+}
+
+auto SimplePq::import_pretrained(std::size_t dsub, std::span<const float> data) -> void {
+    dsub_ = dsub;
+    const std::size_t k = static_cast<std::size_t>(m_) * static_cast<std::size_t>(ksub_);
+    codebooks_ = std::make_unique<AlignedCentroidBuffer>(static_cast<std::uint32_t>(k), dsub_);
+    for (std::size_t i = 0; i < k; ++i) {
+        codebooks_->set_centroid(static_cast<std::uint32_t>(i),
+                                 std::span<const float>(data.data() + i * dsub_, dsub_));
+    }
+    trained_ = true;
+}

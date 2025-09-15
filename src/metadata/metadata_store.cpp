@@ -35,7 +35,7 @@ public:
 
     auto add(const DocumentMetadata& doc) -> std::expected<void, core::error> {
         if (doc.id > std::numeric_limits<std::uint32_t>::max()) {
-            return std::unexpected(core::error{
+            return std::vesper_unexpected(core::error{
                 core::error_code::precondition_failed,
                 "Document id exceeds 32-bit limit required by Roaring",
                 "metadata.add"
@@ -56,7 +56,7 @@ public:
         std::unique_lock lock(mutex_);
         for (const auto& d : docs) {
             if (d.id > std::numeric_limits<std::uint32_t>::max()) {
-                return std::unexpected(core::error{
+                return std::vesper_unexpected(core::error{
                     core::error_code::precondition_failed,
                     "Document id exceeds 32-bit limit required by Roaring",
                     "metadata.add_batch"
@@ -77,7 +77,7 @@ public:
     auto update(const DocumentMetadata& doc) -> std::expected<void, core::error> {
         std::unique_lock lock(mutex_);
         if (documents_.find(doc.id) == documents_.end()) {
-            return std::unexpected(core::error{
+            return std::vesper_unexpected(core::error{
                 core::error_code::not_found,
                 "Document not found",
                 "metadata.update"
@@ -93,7 +93,7 @@ public:
     auto remove(std::uint64_t id) -> std::expected<void, core::error> {
         std::unique_lock lock(mutex_);
         if (documents_.find(id) == documents_.end()) {
-            return std::unexpected(core::error{
+            return std::vesper_unexpected(core::error{
                 core::error_code::not_found,
                 "Document not found",
                 "metadata.remove"
@@ -110,7 +110,7 @@ public:
 
     auto search(const filter_expr& expr, std::size_t limit) const -> std::expected<std::vector<std::uint64_t>, core::error> {
         auto bitmap_e = evaluate_filter(expr);
-        if (!bitmap_e) return std::unexpected(bitmap_e.error());
+        if (!bitmap_e) return std::vesper_unexpected(bitmap_e.error());
         const auto& bm = *bitmap_e;
         std::vector<std::uint64_t> ids;
         ids.reserve(static_cast<std::size_t>(bm.cardinality()));
@@ -125,7 +125,7 @@ public:
         std::shared_lock lock(mutex_);
         auto it = documents_.find(id);
         if (it == documents_.end()) {
-            return std::unexpected(core::error{core::error_code::not_found, "Document not found", "metadata.get"});
+            return std::vesper_unexpected(core::error{core::error_code::not_found, "Document not found", "metadata.get"});
         }
         return it->second;
     }
@@ -184,7 +184,7 @@ public:
         std::shared_lock lock(mutex_);
         std::ofstream os(path, std::ios::binary);
         if (!os) {
-            return std::unexpected(core::error{core::error_code::io_failed, "Failed to open file for writing", "metadata.save"});
+            return std::vesper_unexpected(core::error{core::error_code::io_failed, "Failed to open file for writing", "metadata.save"});
         }
         const std::uint32_t version = 1;
         os.write(reinterpret_cast<const char*>(&version), sizeof(version));
@@ -237,18 +237,18 @@ public:
         std::unique_lock lock(mutex_);
         std::ifstream is(path, std::ios::binary);
         if (!is) {
-            return std::unexpected(core::error{core::error_code::io_failed, "Failed to open file for reading", "metadata.load"});
+            return std::vesper_unexpected(core::error{core::error_code::io_failed, "Failed to open file for reading", "metadata.load"});
         }
         std::uint32_t version{};
         if (!is.read(reinterpret_cast<char*>(&version), sizeof(version))) {
-            return std::unexpected(core::error{core::error_code::data_integrity, "Corrupt header", "metadata.load"});
+            return std::vesper_unexpected(core::error{core::error_code::data_integrity, "Corrupt header", "metadata.load"});
         }
         if (version != 1) {
-            return std::unexpected(core::error{core::error_code::data_integrity, "Unsupported version", "metadata.load"});
+            return std::vesper_unexpected(core::error{core::error_code::data_integrity, "Unsupported version", "metadata.load"});
         }
         std::uint64_t n_docs{};
         if (!is.read(reinterpret_cast<char*>(&n_docs), sizeof(n_docs))) {
-            return std::unexpected(core::error{core::error_code::data_integrity, "Corrupt count", "metadata.load"});
+            return std::vesper_unexpected(core::error{core::error_code::data_integrity, "Corrupt count", "metadata.load"});
         }
         documents_.clear();
         tag_index_.clear();
@@ -257,26 +257,26 @@ public:
         for (std::uint64_t idx = 0; idx < n_docs; ++idx) {
             DocumentMetadata d{};
             if (!is.read(reinterpret_cast<char*>(&d.id), sizeof(d.id))) {
-                return std::unexpected(core::error{core::error_code::data_integrity, "Corrupt id", "metadata.load"});
+                return std::vesper_unexpected(core::error{core::error_code::data_integrity, "Corrupt id", "metadata.load"});
             }
             std::uint64_t n_attrs{};
             if (!is.read(reinterpret_cast<char*>(&n_attrs), sizeof(n_attrs))) {
-                return std::unexpected(core::error{core::error_code::data_integrity, "Corrupt attr count", "metadata.load"});
+                return std::vesper_unexpected(core::error{core::error_code::data_integrity, "Corrupt attr count", "metadata.load"});
             }
             for (std::uint64_t j = 0; j < n_attrs; ++j) {
                 std::string key;
                 if (!read_string(is, key)) {
-                    return std::unexpected(core::error{core::error_code::data_integrity, "Corrupt key", "metadata.load"});
+                    return std::vesper_unexpected(core::error{core::error_code::data_integrity, "Corrupt key", "metadata.load"});
                 }
                 std::uint8_t tag{};
                 if (!is.read(reinterpret_cast<char*>(&tag), sizeof(tag))) {
-                    return std::unexpected(core::error{core::error_code::data_integrity, "Corrupt type tag", "metadata.load"});
+                    return std::vesper_unexpected(core::error{core::error_code::data_integrity, "Corrupt type tag", "metadata.load"});
                 }
                 switch (tag) {
                     case 0: {
                         std::string s;
                         if (!read_string(is, s)) {
-                            return std::unexpected(core::error{core::error_code::data_integrity, "Corrupt string", "metadata.load"});
+                            return std::vesper_unexpected(core::error{core::error_code::data_integrity, "Corrupt string", "metadata.load"});
                         }
                         d.attributes.emplace(std::move(key), std::move(s));
                         break;
@@ -284,7 +284,7 @@ public:
                     case 1: {
                         double val{};
                         if (!is.read(reinterpret_cast<char*>(&val), sizeof(val))) {
-                            return std::unexpected(core::error{core::error_code::data_integrity, "Corrupt double", "metadata.load"});
+                            return std::vesper_unexpected(core::error{core::error_code::data_integrity, "Corrupt double", "metadata.load"});
                         }
                         d.attributes.emplace(std::move(key), val);
                         break;
@@ -292,7 +292,7 @@ public:
                     case 2: {
                         std::int64_t val{};
                         if (!is.read(reinterpret_cast<char*>(&val), sizeof(val))) {
-                            return std::unexpected(core::error{core::error_code::data_integrity, "Corrupt int64", "metadata.load"});
+                            return std::vesper_unexpected(core::error{core::error_code::data_integrity, "Corrupt int64", "metadata.load"});
                         }
                         d.attributes.emplace(std::move(key), val);
                         break;
@@ -300,13 +300,13 @@ public:
                     case 3: {
                         bool val{};
                         if (!is.read(reinterpret_cast<char*>(&val), sizeof(val))) {
-                            return std::unexpected(core::error{core::error_code::data_integrity, "Corrupt bool", "metadata.load"});
+                            return std::vesper_unexpected(core::error{core::error_code::data_integrity, "Corrupt bool", "metadata.load"});
                         }
                         d.attributes.emplace(std::move(key), val);
                         break;
                     }
                     default:
-                        return std::unexpected(core::error{core::error_code::data_integrity, "Unknown type tag", "metadata.load"});
+                        return std::vesper_unexpected(core::error{core::error_code::data_integrity, "Unknown type tag", "metadata.load"});
                 }
             }
             // Insert and index
@@ -493,7 +493,7 @@ auto kv_to_filter(const std::unordered_map<std::string, std::string>& kvs) -> fi
 
 auto parse_filter_json(const std::string& json) -> std::expected<filter_expr, core::error> {
     // JSON parsing is out-of-scope without a dependency; return unavailable
-    return std::unexpected(core::error{core::error_code::unavailable, "JSON parsing not enabled", "metadata.parse_filter_json"});
+    return std::vesper_unexpected(core::error{core::error_code::unavailable, "JSON parsing not enabled", "metadata.parse_filter_json"});
 }
 
 static void to_json_impl(const filter_expr& e, std::string& out) {

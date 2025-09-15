@@ -86,7 +86,7 @@
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
-      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-src\src\catch2\..;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-build\generated-includes;C:\Users\cisco\Desktop\dev\research\Vesper\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-src\src\catch2\..;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-build\generated-includes;C:\Users\cisco\Desktop\dev\research\Vesper\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include\roaring;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\cpp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
       <BasicRuntimeChecks>EnableFastChecks</BasicRuntimeChecks>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
@@ -111,10 +111,10 @@
     </ClCompile>
     <ResourceCompile>
       <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_DEBUG;_WINDOWS;VESPER_ENABLE_KERNEL_DISPATCH=0;VESPER_ENABLE_ACCELERATE=0;VESPER_SERIALIZE_BASE_LAYER=1;VESPER_PARTITIONED_BASE_LOCKS=0;VESPER_EXPERIMENTAL_WORK_STEALING=0;CMAKE_INTDIR=\"Debug\"</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-src\src\catch2\..;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-build\generated-includes;C:\Users\cisco\Desktop\dev\research\Vesper\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-src\src\catch2\..;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-build\generated-includes;C:\Users\cisco\Desktop\dev\research\Vesper\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include\roaring;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\cpp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ResourceCompile>
     <Midl>
-      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-src\src\catch2\..;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-build\generated-includes;C:\Users\cisco\Desktop\dev\research\Vesper\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-src\src\catch2\..;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-build\generated-includes;C:\Users\cisco\Desktop\dev\research\Vesper\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include\roaring;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\cpp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
       <HeaderFileName>%(Filename).h</HeaderFileName>
       <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
@@ -134,7 +134,7 @@ exit /b %1
 if %errorlevel% neq 0 goto :VCEnd</Command>
     </PostBuildEvent>
     <Link>
-      <AdditionalDependencies>_deps\catch2-build\src\Debug\Catch2Maind.lib;Debug\vesper_core.lib;Debug\vesper_wal.lib;_deps\catch2-build\src\Debug\Catch2d.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
+      <AdditionalDependencies>_deps\catch2-build\src\Debug\Catch2Maind.lib;Debug\vesper_core.lib;Debug\vesper_wal.lib;_deps\catch2-build\src\Debug\Catch2d.lib;_deps\croaring-build\src\Debug\roaring.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
       <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
       <DataExecutionPrevention></DataExecutionPrevention>
@@ -153,7 +153,7 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
-      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-src\src\catch2\..;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-build\generated-includes;C:\Users\cisco\Desktop\dev\research\Vesper\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-src\src\catch2\..;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-build\generated-includes;C:\Users\cisco\Desktop\dev\research\Vesper\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include\roaring;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\cpp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
       <BasicRuntimeChecks>Default</BasicRuntimeChecks>
       <EnableEnhancedInstructionSet>AdvancedVectorExtensions2</EnableEnhancedInstructionSet>
@@ -179,10 +179,10 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
     </ClCompile>
     <ResourceCompile>
       <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;VESPER_ENABLE_KERNEL_DISPATCH=0;VESPER_ENABLE_ACCELERATE=0;VESPER_SERIALIZE_BASE_LAYER=1;VESPER_PARTITIONED_BASE_LOCKS=0;VESPER_EXPERIMENTAL_WORK_STEALING=0;CMAKE_INTDIR=\"Release\"</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-src\src\catch2\..;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-build\generated-includes;C:\Users\cisco\Desktop\dev\research\Vesper\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-src\src\catch2\..;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-build\generated-includes;C:\Users\cisco\Desktop\dev\research\Vesper\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include\roaring;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\cpp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ResourceCompile>
     <Midl>
-      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-src\src\catch2\..;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-build\generated-includes;C:\Users\cisco\Desktop\dev\research\Vesper\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-src\src\catch2\..;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-build\generated-includes;C:\Users\cisco\Desktop\dev\research\Vesper\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include\roaring;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\cpp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
       <HeaderFileName>%(Filename).h</HeaderFileName>
       <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
@@ -202,7 +202,7 @@ exit /b %1
 if %errorlevel% neq 0 goto :VCEnd</Command>
     </PostBuildEvent>
     <Link>
-      <AdditionalDependencies>_deps\catch2-build\src\Release\Catch2Main.lib;Release\vesper_core.lib;Release\vesper_wal.lib;_deps\catch2-build\src\Release\Catch2.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
+      <AdditionalDependencies>_deps\catch2-build\src\Release\Catch2Main.lib;Release\vesper_core.lib;Release\vesper_wal.lib;_deps\catch2-build\src\Release\Catch2.lib;_deps\croaring-build\src\Release\roaring.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
       <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
       <DataExecutionPrevention></DataExecutionPrevention>
@@ -221,7 +221,7 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">
     <ClCompile>
-      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-src\src\catch2\..;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-build\generated-includes;C:\Users\cisco\Desktop\dev\research\Vesper\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-src\src\catch2\..;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-build\generated-includes;C:\Users\cisco\Desktop\dev\research\Vesper\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include\roaring;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\cpp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
       <BasicRuntimeChecks>Default</BasicRuntimeChecks>
       <EnableEnhancedInstructionSet>AdvancedVectorExtensions2</EnableEnhancedInstructionSet>
@@ -247,10 +247,10 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
     </ClCompile>
     <ResourceCompile>
       <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;VESPER_ENABLE_KERNEL_DISPATCH=0;VESPER_ENABLE_ACCELERATE=0;VESPER_SERIALIZE_BASE_LAYER=1;VESPER_PARTITIONED_BASE_LOCKS=0;VESPER_EXPERIMENTAL_WORK_STEALING=0;CMAKE_INTDIR=\"MinSizeRel\"</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-src\src\catch2\..;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-build\generated-includes;C:\Users\cisco\Desktop\dev\research\Vesper\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-src\src\catch2\..;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-build\generated-includes;C:\Users\cisco\Desktop\dev\research\Vesper\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include\roaring;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\cpp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ResourceCompile>
     <Midl>
-      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-src\src\catch2\..;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-build\generated-includes;C:\Users\cisco\Desktop\dev\research\Vesper\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-src\src\catch2\..;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-build\generated-includes;C:\Users\cisco\Desktop\dev\research\Vesper\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include\roaring;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\cpp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
       <HeaderFileName>%(Filename).h</HeaderFileName>
       <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
@@ -270,7 +270,7 @@ exit /b %1
 if %errorlevel% neq 0 goto :VCEnd</Command>
     </PostBuildEvent>
     <Link>
-      <AdditionalDependencies>_deps\catch2-build\src\MinSizeRel\Catch2Main.lib;MinSizeRel\vesper_core.lib;MinSizeRel\vesper_wal.lib;_deps\catch2-build\src\MinSizeRel\Catch2.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
+      <AdditionalDependencies>_deps\catch2-build\src\MinSizeRel\Catch2Main.lib;MinSizeRel\vesper_core.lib;MinSizeRel\vesper_wal.lib;_deps\catch2-build\src\MinSizeRel\Catch2.lib;_deps\croaring-build\src\MinSizeRel\roaring.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
       <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
       <DataExecutionPrevention></DataExecutionPrevention>
@@ -289,7 +289,7 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">
     <ClCompile>
-      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-src\src\catch2\..;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-build\generated-includes;C:\Users\cisco\Desktop\dev\research\Vesper\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-src\src\catch2\..;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-build\generated-includes;C:\Users\cisco\Desktop\dev\research\Vesper\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include\roaring;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\cpp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
       <BasicRuntimeChecks>Default</BasicRuntimeChecks>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
@@ -314,10 +314,10 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
     </ClCompile>
     <ResourceCompile>
       <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;VESPER_ENABLE_KERNEL_DISPATCH=0;VESPER_ENABLE_ACCELERATE=0;VESPER_SERIALIZE_BASE_LAYER=1;VESPER_PARTITIONED_BASE_LOCKS=0;VESPER_EXPERIMENTAL_WORK_STEALING=0;CMAKE_INTDIR=\"RelWithDebInfo\"</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-src\src\catch2\..;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-build\generated-includes;C:\Users\cisco\Desktop\dev\research\Vesper\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-src\src\catch2\..;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-build\generated-includes;C:\Users\cisco\Desktop\dev\research\Vesper\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include\roaring;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\cpp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ResourceCompile>
     <Midl>
-      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-src\src\catch2\..;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-build\generated-includes;C:\Users\cisco\Desktop\dev\research\Vesper\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\cisco\Desktop\dev\research\Vesper;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-src\src\catch2\..;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-build\generated-includes;C:\Users\cisco\Desktop\dev\research\Vesper\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\include\roaring;C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-src\cpp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
       <HeaderFileName>%(Filename).h</HeaderFileName>
       <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
@@ -337,7 +337,7 @@ exit /b %1
 if %errorlevel% neq 0 goto :VCEnd</Command>
     </PostBuildEvent>
     <Link>
-      <AdditionalDependencies>_deps\catch2-build\src\RelWithDebInfo\Catch2Main.lib;RelWithDebInfo\vesper_core.lib;RelWithDebInfo\vesper_wal.lib;_deps\catch2-build\src\RelWithDebInfo\Catch2.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
+      <AdditionalDependencies>_deps\catch2-build\src\RelWithDebInfo\Catch2Main.lib;RelWithDebInfo\vesper_core.lib;RelWithDebInfo\vesper_wal.lib;_deps\catch2-build\src\RelWithDebInfo\Catch2.lib;_deps\croaring-build\src\RelWithDebInfo\roaring.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
       <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
       <DataExecutionPrevention></DataExecutionPrevention>
@@ -414,14 +414,18 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
   <ItemGroup>
     <ClCompile Include="C:\Users\cisco\Desktop\dev\research\Vesper\tests\support\manifest_test_helpers.cpp" />
     <ClCompile Include="C:\Users\cisco\Desktop\dev\research\Vesper\tests\support\wal_replay_helpers.cpp" />
+    <ClCompile Include="C:\Users\cisco\Desktop\dev\research\Vesper\tests\unit\bm25_test.cpp" />
     <ClCompile Include="C:\Users\cisco\Desktop\dev\research\Vesper\tests\unit\cosine_kernels_test.cpp" />
     <ClCompile Include="C:\Users\cisco\Desktop\dev\research\Vesper\tests\unit\distance_kernels_test.cpp" />
     <ClCompile Include="C:\Users\cisco\Desktop\dev\research\Vesper\tests\unit\error_codes_test.cpp" />
     <ClCompile Include="C:\Users\cisco\Desktop\dev\research\Vesper\tests\unit\filter_eval_test.cpp" />
+    <ClCompile Include="C:\Users\cisco\Desktop\dev\research\Vesper\tests\unit\fusion_algorithms_test.cpp" />
     <ClCompile Include="C:\Users\cisco\Desktop\dev\research\Vesper\tests\unit\headers_compile_test.cpp" />
+    <ClCompile Include="C:\Users\cisco\Desktop\dev\research\Vesper\tests\unit\hybrid_searcher_test.cpp" />
     <ClCompile Include="C:\Users\cisco\Desktop\dev\research\Vesper\tests\unit\inmemory_search_dispatch_equivalence_test.cpp" />
     <ClCompile Include="C:\Users\cisco\Desktop\dev\research\Vesper\tests\unit\inmemory_search_filter_test.cpp" />
     <ClCompile Include="C:\Users\cisco\Desktop\dev\research\Vesper\tests\unit\inmemory_search_metric_cosine_test.cpp" />
+    <ClCompile Include="C:\Users\cisco\Desktop\dev\research\Vesper\tests\unit\ivfpq_defaults_test.cpp" />
     <ClCompile Include="C:\Users\cisco\Desktop\dev\research\Vesper\tests\unit\kernels_backend_auto_test.cpp" />
     <ClCompile Include="C:\Users\cisco\Desktop\dev\research\Vesper\tests\unit\kernels_backend_select_test.cpp" />
     <ClCompile Include="C:\Users\cisco\Desktop\dev\research\Vesper\tests\unit\kernels_batch_topk_l2_test.cpp" />
@@ -430,8 +434,13 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
     <ClCompile Include="C:\Users\cisco\Desktop\dev\research\Vesper\tests\unit\kernels_topk_ties_test.cpp" />
     <ClCompile Include="C:\Users\cisco\Desktop\dev\research\Vesper\tests\unit\manifest_test_helpers_unit_test.cpp" />
     <ClCompile Include="C:\Users\cisco\Desktop\dev\research\Vesper\tests\unit\open_collection_test.cpp" />
+    <ClCompile Include="C:\Users\cisco\Desktop\dev\research\Vesper\tests\unit\projection_assigner_tail_test.cpp" />
+    <ClCompile Include="C:\Users\cisco\Desktop\dev\research\Vesper\tests\unit\projection_stability_smoke_test.cpp" />
     <ClCompile Include="C:\Users\cisco\Desktop\dev\research\Vesper\tests\unit\recovery_harness_snapshot_hooks_test.cpp" />
+    <ClCompile Include="C:\Users\cisco\Desktop\dev\research\Vesper\tests\unit\safe_getenv_test.cpp" />
     <ClCompile Include="C:\Users\cisco\Desktop\dev\research\Vesper\tests\unit\simd_kernels_test.cpp" />
+    <ClCompile Include="C:\Users\cisco\Desktop\dev\research\Vesper\tests\unit\test_io_uring.cpp" />
+    <ClCompile Include="C:\Users\cisco\Desktop\dev\research\Vesper\tests\unit\test_numa_allocator.cpp" />
     <ClCompile Include="C:\Users\cisco\Desktop\dev\research\Vesper\tests\unit\wal_delivery_limits_test.cpp" />
     <ClCompile Include="C:\Users\cisco\Desktop\dev\research\Vesper\tests\unit\wal_frame_padding_test.cpp" />
     <ClCompile Include="C:\Users\cisco\Desktop\dev\research\Vesper\tests\unit\wal_frame_test.cpp" />
@@ -477,6 +486,10 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
     <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\catch2-build\src\Catch2WithMain.vcxproj">
       <Project>{8bd3552a-2cfb-4a59-ab15-2031b97ada1e}</Project>
       <Name>Catch2WithMain</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\_deps\croaring-build\src\roaring.vcxproj">
+      <Project>{4A20D676-2578-3E94-BC40-5C19EBACFCE1}</Project>
+      <Name>roaring</Name>
     </ProjectReference>
     <ProjectReference Include="C:\Users\cisco\Desktop\dev\research\Vesper\build-release\vesper_core.vcxproj">
       <Project>{EA378651-CB3E-3044-96DF-4F78689FA8E4}</Project>

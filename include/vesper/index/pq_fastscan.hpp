@@ -136,6 +136,14 @@ public:
     auto encode_blocks(const float* data, std::size_t n) 
         -> std::vector<PqCodeBlock>;
     
+    /** \brief Decode PQ codes back to vectors.
+     *
+     * \param codes PQ codes [n x m]
+     * \param n Number of codes
+     * \param[out] data Output vectors [n x dim]
+     */
+    auto decode(const std::uint8_t* codes, std::size_t n, float* data) const -> void;
+    
     /** \brief Compute distances using lookup tables (ADC).
      *
      * \param query Query vector [dim]
@@ -165,29 +173,36 @@ public:
      * \param query Query vector [dim]
      * \return Lookup tables [m x ksub]
      */
-    auto compute_lookup_tables(const float* query) const 
+    auto compute_lookup_tables(const float* query) const
         -> AlignedCentroidBuffer;
-    
+
     /** \brief Get configuration. */
-    [[nodiscard]] auto config() const noexcept -> const FastScanPqConfig& { 
-        return config_; 
+    [[nodiscard]] auto config() const noexcept -> const FastScanPqConfig& {
+        return config_;
     }
-    
+
     /** \brief Check if trained. */
-    [[nodiscard]] auto is_trained() const noexcept -> bool { 
-        return trained_; 
+    [[nodiscard]] auto is_trained() const noexcept -> bool {
+        return trained_;
     }
-    
+
     /** \brief Get dimension per subquantizer. */
-    [[nodiscard]] auto dsub() const noexcept -> std::size_t { 
-        return dsub_; 
+    [[nodiscard]] auto dsub() const noexcept -> std::size_t {
+        return dsub_;
     }
-    
+
     /** \brief Get total dimension. */
-    [[nodiscard]] auto dimension() const noexcept -> std::size_t { 
-        return config_.m * dsub_; 
+    [[nodiscard]] auto dimension() const noexcept -> std::size_t {
+        return config_.m * dsub_;
     }
-    
+
+    /** \brief Export codebooks as a dense row-major array [m*ksub x dsub]. */
+    auto export_codebooks(std::vector<float>& out) const -> void;
+    /** \brief Import pre-trained codebooks and mark as trained. */
+    auto import_pretrained(std::size_t dsub, std::span<const float> data) -> void;
+    /** \brief Get ksub (codes per subquantizer). */
+    [[nodiscard]] auto ksub() const noexcept -> std::uint32_t { return ksub_; }
+
 private:
     FastScanPqConfig config_;
     std::uint32_t ksub_;                        /**< Codes per subquantizer */

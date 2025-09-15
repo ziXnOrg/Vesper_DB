@@ -159,9 +159,12 @@ public:
      * \param layer Layer level (0 = base layer)
      * \return Vector of neighbor IDs
      */
-    auto get_neighbors(std::uint64_t node_id, int layer) const 
+    auto get_neighbors(std::uint64_t node_id, int layer) const
         -> std::vector<std::uint64_t>;
-    
+
+    /** \brief Hint that the graph will not be modified (enables lock elision in search). */
+    auto set_read_only(bool read_only) -> void;
+
     /** \brief Get all nodes that point to a specific node.
      *
      * \param node_id Target node identifier
@@ -170,7 +173,7 @@ public:
      */
     auto get_reverse_neighbors(std::uint64_t node_id, int layer) const
         -> std::vector<std::uint64_t>;
-    
+
     /** \brief Remove an edge between two nodes.
      *
      * \param from Source node ID
@@ -220,9 +223,6 @@ public:
 
     /** \brief Get vector dimensionality. */
     auto dimension() const noexcept -> std::size_t;
-
-    /** \brief Get number of indexed vectors. */
-    auto size() const noexcept -> std::size_t;
     
     /** \brief Mark vector as deleted (soft delete). */
     auto mark_deleted(std::uint64_t id) -> std::expected<void, core::error>;

@@ -159,6 +159,9 @@ public:
 
     ~Impl() = default;
 
+    // Accessors
+    auto get_memory_budget() const -> std::size_t { return memory_budget_mb_; }
+
     auto build(const float* vectors, std::size_t n, const IndexBuildConfig& config)
         -> std::expected<void, core::error> {
 
@@ -1237,8 +1240,7 @@ public:
 
         // Load individual indexes
         if (has_hnsw) {
-            hnsw_index_ = std::make_unique<HnswIndex>();
-            auto result = hnsw_index_->load(path + "/hnsw");
+            auto result = HnswIndex::load(path + "/hnsw");
             if (!result) {
                 return std::vesper_unexpected(core::error{
                     core::error_code::io_failed,
@@ -1246,11 +1248,11 @@ public:
                     "index_manager.load"
                 });
             }
+            hnsw_index_ = std::make_unique<HnswIndex>(std::move(*result));
         }
 
         if (has_ivf_pq) {
-            ivf_pq_index_ = std::make_unique<IvfPqIndex>();
-            auto result = ivf_pq_index_->load(path + "/ivf_pq");
+            auto result = IvfPqIndex::load(path + "/ivf_pq");
             if (!result) {
                 return std::vesper_unexpected(core::error{
                     core::error_code::io_failed,
@@ -1258,6 +1260,7 @@ public:
                     "index_manager.load"
                 });
             }
+            ivf_pq_index_ = std::make_unique<IvfPqIndex>(std::move(*result));
         }
 
         if (has_disk_graph) {
@@ -1854,6 +1857,10 @@ auto IndexManager::disk_usage() const -> std::size_t {
 
 auto IndexManager::set_memory_budget(std::size_t budget_mb) -> std::expected<void, core::error> {
     return impl_->set_memory_budget(budget_mb);
+}
+
+auto IndexManager::get_memory_budget() const -> std::size_t {
+    return impl_->get_memory_budget();
 }
 
 auto IndexManager::set_metadata(std::uint64_t id,
