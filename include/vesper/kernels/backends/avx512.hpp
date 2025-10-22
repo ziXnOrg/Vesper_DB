@@ -245,6 +245,169 @@ inline auto avx512_cosine_distance(std::span<const float> a, std::span<const flo
     return 1.0f - avx512_cosine_similarity(a, b);
 }
 
+/** \brief AVX-512 optimized batch L2 squared distance.
+ *
+ * Computes L2 squared distances from query to multiple vectors.
+ * Optimized for cache locality and SIMD throughput with 16-wide operations.
+ *
+ * \param query Query vector
+ * \param vectors Packed vectors (row-major layout)
+ * \param nvec Number of vectors
+ * \param dim Dimension
+ * \param distances Output distances array
+ */
+#ifdef _MSC_VER
+[[maybe_unused]]
+#else
+[[gnu::hot]]
+#endif
+inline void avx512_batch_l2_sq(std::span<const float> query,
+                               const float* vectors, size_t nvec, size_t dim,
+                               float* distances) noexcept {
+    const float* q = query.data();
+    const size_t simd_dim = dim & ~15u;
+    
+    // Process 2 vectors at a time for better ILP
+    size_t v = 0;
+    for (; v + 1 < nvec; v += 2) {
+        __m512 sum0 = _mm512_setzero_ps();
+        __m512 sum1 = _mm512_setzero_ps();
+        
+        // Main SIMD loop - process 16 elements at once
+        for (size_t d = 0; d < simd_dim; d += 16) {
+            const __m512 vq = _mm512_loadu_ps(q + d);
+            
+            const __m512 v0 = _mm512_loadu_ps(vectors + v * dim + d);
+            const __m512 v1 = _mm512_loadu_ps(vectors + (v + 1) * dim + d);
+            
+            const __m512 diff0 = _mm512_sub_ps(vq, v0);
+            const __m512 diff1 = _mm512_sub_ps(vq, v1);
+            
+            sum0 = _mm512_fmadd_ps(diff0, diff0, sum0);
+            sum1 = _mm512_fmadd_ps(diff1, diff1, sum1);
+        }
+        
+        distances[v] = detail::hsum_ps_512(sum0);
+        distances[v + 1] = detail::hsum_ps_512(sum1);
+        
+        // Handle tail dimensions with masked operations
+        const size_t remaining = dim - simd_dim;
+        if (remaining > 0) {
+            const __mmask16 mask = (1u << remaining) - 1;
+            const __m512 vq = _mm512_maskz_loadu_ps(mask, q + simd_dim);
+            
+            const __m512 v0 = _mm512_maskz_loadu_ps(mask, vectors + v * dim + simd_dim);
+            const __m512 v1 = _mm512_maskz_loadu_ps(mask, vectors + (v + 1) * dim + simd_dim);
+            
+            const __m512 diff0 = _mm512_sub_ps(vq, v0);
+            const __m512 diff1 = _mm512_sub_ps(vq, v1);
+            
+            const __m512 sq0 = _mm512_mul_ps(diff0, diff0);
+            const __m512 sq1 = _mm512_mul_ps(diff1, diff1);
+            
+            distances[v] += _mm512_mask_reduce_add_ps(mask, sq0);
+            distances[v + 1] += _mm512_mask_reduce_add_ps(mask, sq1);
+        }
+    }
+    
+    // Process remaining single vector
+    if (v < nvec) {
+        __m512 sum = _mm512_setzero_ps();
+        for (size_t d = 0; d < simd_dim; d += 16) {
+            const __m512 vq = _mm512_loadu_ps(q + d);
+            const __m512 vv = _mm512_loadu_ps(vectors + v * dim + d);
+            const __m512 diff = _mm512_sub_ps(vq, vv);
+            sum = _mm512_fmadd_ps(diff, diff, sum);
+        }
+        distances[v] = detail::hsum_ps_512(sum);
+        
+        // Handle tail
+        const size_t remaining = dim - simd_dim;
+        if (remaining > 0) {
+            const __mmask16 mask = (1u << remaining) - 1;
+            const __m512 vq = _mm512_maskz_loadu_ps(mask, q + simd_dim);
+            const __m512 vv = _mm512_maskz_loadu_ps(mask, vectors + v * dim + simd_dim);
+            const __m512 diff = _mm512_sub_ps(vq, vv);
+            const __m512 sq = _mm512_mul_ps(diff, diff);
+            distances[v] += _mm512_mask_reduce_add_ps(mask, sq);
+        }
+    }
+}
+
+/** \brief AVX-512 optimized batch inner product.
+ *
+ * Computes inner products from query to multiple vectors.
+ *
+ * \param query Query vector
+ * \param vectors Packed vectors (row-major layout)
+ * \param nvec Number of vectors
+ * \param dim Dimension
+ * \param distances Output inner products array
+ */
+#ifdef _MSC_VER
+[[maybe_unused]]
+#else
+[[gnu::hot]]
+#endif
+inline void avx512_batch_inner_product(std::span<const float> query,
+                                       const float* vectors, size_t nvec, size_t dim,
+                                       float* distances) noexcept {
+    const float* q = query.data();
+    const size_t simd_dim = dim & ~15u;
+    
+    // Process 2 vectors at a time
+    size_t v = 0;
+    for (; v + 1 < nvec; v += 2) {
+        __m512 sum0 = _mm512_setzero_ps();
+        __m512 sum1 = _mm512_setzero_ps();
+        
+        for (size_t d = 0; d < simd_dim; d += 16) {
+            const __m512 vq = _mm512_loadu_ps(q + d);
+            
+            const __m512 v0 = _mm512_loadu_ps(vectors + v * dim + d);
+            const __m512 v1 = _mm512_loadu_ps(vectors + (v + 1) * dim + d);
+            
+            sum0 = _mm512_fmadd_ps(vq, v0, sum0);
+            sum1 = _mm512_fmadd_ps(vq, v1, sum1);
+        }
+        
+        distances[v] = detail::hsum_ps_512(sum0);
+        distances[v + 1] = detail::hsum_ps_512(sum1);
+        
+        // Handle tail
+        const size_t remaining = dim - simd_dim;
+        if (remaining > 0) {
+            const __mmask16 mask = (1u << remaining) - 1;
+            const __m512 vq = _mm512_maskz_loadu_ps(mask, q + simd_dim);
+            
+            const __m512 v0 = _mm512_maskz_loadu_ps(mask, vectors + v * dim + simd_dim);
+            const __m512 v1 = _mm512_maskz_loadu_ps(mask, vectors + (v + 1) * dim + simd_dim);
+            
+            distances[v] += _mm512_mask_reduce_add_ps(mask, _mm512_mul_ps(vq, v0));
+            distances[v + 1] += _mm512_mask_reduce_add_ps(mask, _mm512_mul_ps(vq, v1));
+        }
+    }
+    
+    // Process remaining vector
+    if (v < nvec) {
+        __m512 sum = _mm512_setzero_ps();
+        for (size_t d = 0; d < simd_dim; d += 16) {
+            const __m512 vq = _mm512_loadu_ps(q + d);
+            const __m512 vv = _mm512_loadu_ps(vectors + v * dim + d);
+            sum = _mm512_fmadd_ps(vq, vv, sum);
+        }
+        distances[v] = detail::hsum_ps_512(sum);
+        
+        const size_t remaining = dim - simd_dim;
+        if (remaining > 0) {
+            const __mmask16 mask = (1u << remaining) - 1;
+            const __m512 vq = _mm512_maskz_loadu_ps(mask, q + simd_dim);
+            const __m512 vv = _mm512_maskz_loadu_ps(mask, vectors + v * dim + simd_dim);
+            distances[v] += _mm512_mask_reduce_add_ps(mask, _mm512_mul_ps(vq, vv));
+        }
+    }
+}
+
 /** \brief Get AVX-512 kernel operations table.
  *
  * Returns static singleton of kernel function pointers.
@@ -255,7 +418,9 @@ inline const KernelOps& get_avx512_ops() noexcept {
         &avx512_l2_sq,
         &avx512_inner_product,
         &avx512_cosine_similarity,
-        &avx512_cosine_distance
+        &avx512_cosine_distance,
+        &avx512_batch_l2_sq,
+        &avx512_batch_inner_product
     };
     return ops;
 }

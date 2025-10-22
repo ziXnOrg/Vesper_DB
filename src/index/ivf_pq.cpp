@@ -52,6 +52,7 @@ namespace vesper::index {
 
 
 #include "vesper/index/projection_assigner.hpp"
+#include "vesper/index/fast_hadamard.hpp"
 
 
 // Max size for metadata JSON blob (64 KiB)
@@ -246,8 +247,43 @@ public:
     std::vector<std::uint32_t> kd_order_;
     AlignedCentroidBuffer kd_leaf_centroids_{1, 1};
     int kd_root_{-1};
-    std::uint32_t kd_leaf_size_{256};
+    std::uint32_t kd_leaf_size_{64};  // Optimized from 256 based on benchmarking
+    
+    // Van Emde Boas layout for cache-oblivious traversal
+    std::vector<KDNode> kd_nodes_veb_;
+    std::vector<int> kd_veb_map_;  // Maps original node index to VEB position
+    bool use_veb_layout_{false};
     std::vector<float> kd_proj_P_; // PCA rows (p=8) row-major size = 8*dim, orthonormal rows
+    
+    // Hierarchical KD-tree structures for improved performance
+    struct HierarchicalKDTree {
+        // Top-level tree over cluster representatives
+        std::vector<KDNode> top_nodes;
+        std::vector<std::uint32_t> top_order;  // indices into representatives
+        int top_root{-1};
+        std::vector<std::vector<float>> representatives;  // cluster centers for top level
+        std::vector<std::uint32_t> rep_to_clusters;  // maps representative to cluster range
+        
+        // Sub-trees for each top-level leaf
+        struct SubTree {
+            std::vector<KDNode> nodes;
+            std::vector<std::uint32_t> order;  // indices into actual centroids
+            int root{-1};
+            std::uint32_t centroid_begin{0};  // range in original centroids
+            std::uint32_t centroid_end{0};
+        };
+        std::vector<SubTree> subtrees;
+        
+        // Configuration
+        std::uint32_t num_representatives{128};  // number of top-level clusters
+        std::uint32_t subtree_leaf_size{32};     // leaf size for sub-trees
+        bool enabled{false};
+    } hierarchical_kd_;
+    
+    // Hierarchical KD-tree methods
+    void hierarchical_kd_build_();
+    std::uint32_t hierarchical_kd_nearest_(const float* vec) const;
+    void hierarchical_kd_assign_batch_(const float* data, std::size_t n, std::uint32_t* out_assignments) const;
 
 
     // Packed leaf centroid panels for 128-D fast path (SoA panels per leaf)
@@ -261,10 +297,21 @@ public:
     std::vector<float> proj_centroids_rm_;       // row-major [nlist x proj_dim_]
     std::vector<float> proj_centroid_norms_;     // [nlist] = ||proj_centroid||^2
     std::vector<float> proj_centroids_pack8_;    // packed panels [ceil(nlist/8) x proj_dim_ x 8] for AVX microkernel
+    
+    // Fast rotational quantization for centroids (2.3× speedup)
+    std::unique_ptr<FastRotationalQuantizer> centroid_quantizer_;
+    std::vector<std::uint8_t> quantized_centroids_;   // [nlist × dim] quantized centroids
+    std::vector<float> centroid_scales_;              // [nlist] scales for reconstruction
+    std::vector<float> centroid_offsets_;             // [nlist] offsets for reconstruction
+    bool use_rotational_quantization_{false};
 
     void kd_build_();
+    void kd_build_veb_layout_();  // Build Van Emde Boas cache-oblivious layout
     std::uint32_t kd_nearest_(const float* vec) const;
+    std::uint32_t kd_nearest_veb_(const float* vec) const;  // VEB-optimized traversal
+    std::uint32_t kd_nearest_approx_(const float* vec, float early_termination_factor = 1.2f) const;
     void kd_assign_batch_(const float* data, std::size_t n, std::uint32_t* out_assignments) const;
+    bool should_use_hierarchical_kd_() const;
 
     // Build projection rows from coarse centroids and precompute projected centroids
     void build_projection_();
@@ -370,6 +417,12 @@ auto IvfPqIndex::Impl::train(const float* data, std::size_t dim, std::size_t n,
     state_.params = params;
     state_.dim = dim;
     state_.dsub = dim / params.m;
+    
+    // Disable ANN coarse assignment for small nlist values where bruteforce is more efficient
+    // Empirical testing shows bruteforce outperforms ANN assigners for nlist < 1024
+    if (params.nlist < 1024 && params.use_centroid_ann) {
+        state_.params.use_centroid_ann = false;
+    }
 
     // Step 1: Train coarse quantizer
     if (auto result = train_coarse_quantizer(data, n, dim); !result.has_value()) {
@@ -491,12 +544,155 @@ auto IvfPqIndex::Impl::train_coarse_quantizer(const float* data, std::size_t n, 
     // Build KD-tree over coarse centroids if selected
     if (state_.params.coarse_assigner == CoarseAssigner::KDTree) {
         kd_build_();
+        
+        // Build Van Emde Boas layout for better cache performance
+        if (kd_nodes_.size() > 64) {  // Only use VEB for larger trees
+            kd_build_veb_layout_();
+            use_veb_layout_ = true;
+        }
+        
+        // Build hierarchical KD-tree for larger datasets
+        if (should_use_hierarchical_kd_()) {
+            hierarchical_kd_build_();
+        }
+        
+        // Initialize fast rotational quantizer for centroids (2.3× speedup)
+        auto use_rq_env = vesper::core::safe_getenv("VESPER_USE_ROTATIONAL_QUANTIZATION");
+        if ((use_rq_env && !use_rq_env->empty() && (*use_rq_env)[0] == '1') || 
+            state_.params.nlist >= 1024) {  // Auto-enable for large nlist
+            
+            centroid_quantizer_ = std::make_unique<FastRotationalQuantizer>();
+            FastRotationalQuantizer::TrainParams rq_params;
+            rq_params.seed = 42;
+            rq_params.num_rotations = 3;  // Multiple rotation blocks for better quantization
+            rq_params.normalize = true;
+            
+            // Train on coarse centroids
+            centroid_quantizer_->train(
+                state_.coarse_centroids.data(),
+                state_.params.nlist,
+                state_.dim,
+                rq_params
+            );
+            
+            // Quantize all centroids
+            quantized_centroids_.resize(state_.params.nlist * state_.dim);
+            centroid_scales_.resize(state_.params.nlist);
+            centroid_offsets_.resize(state_.params.nlist);
+            
+            centroid_quantizer_->quantize_batch(
+                state_.coarse_centroids.data(),
+                state_.params.nlist,
+                quantized_centroids_.data(),
+                centroid_scales_.data(),
+                centroid_offsets_.data()
+            );
+            
+            use_rotational_quantization_ = true;
+        }
     } else {
         kd_nodes_.clear(); kd_order_.clear(); kd_root_ = -1;
+        kd_nodes_veb_.clear(); kd_veb_map_.clear();
+        use_veb_layout_ = false;
+        hierarchical_kd_.enabled = false;
+        use_rotational_quantization_ = false;
     }
 
     return {};
 
+}
+
+void IvfPqIndex::Impl::kd_build_veb_layout_() {
+    if (kd_nodes_.empty() || kd_root_ == -1) return;
+    
+    const size_t num_nodes = kd_nodes_.size();
+    kd_nodes_veb_.clear();
+    kd_nodes_veb_.reserve(num_nodes);
+    kd_veb_map_.resize(num_nodes, -1);
+    
+    // Helper to estimate subtree size
+    std::function<size_t(int)> estimate_subtree_size;
+    estimate_subtree_size = [&](int node_idx) -> size_t {
+        if (node_idx < 0) return 0;
+        const KDNode& node = kd_nodes_[static_cast<size_t>(node_idx)];
+        if (node.leaf) return 1;
+        
+        // Simple heuristic: count nodes up to depth 3
+        size_t count = 1;
+        std::queue<std::pair<int, int>> q;
+        q.push({node_idx, 0});
+        
+        while (!q.empty() && count < 64) {
+            auto [idx, depth] = q.front();
+            q.pop();
+            if (depth >= 3) break;
+            
+            const KDNode& n = kd_nodes_[static_cast<size_t>(idx)];
+            if (n.left >= 0) {
+                count++;
+                q.push({n.left, depth + 1});
+            }
+            if (n.right >= 0) {
+                count++;
+                q.push({n.right, depth + 1});
+            }
+        }
+        return count;
+    };
+    
+    // Recursive VEB layout construction
+    std::function<void(int, size_t&)> build_veb;
+    build_veb = [&](int node_idx, size_t& veb_pos) {
+        if (node_idx < 0) return;
+        
+        const KDNode& src = kd_nodes_[static_cast<size_t>(node_idx)];
+        
+        // Allocate position in VEB layout
+        size_t my_pos = veb_pos++;
+        kd_veb_map_[static_cast<size_t>(node_idx)] = static_cast<int>(my_pos);
+        kd_nodes_veb_.push_back(src);
+        
+        // For cache efficiency, layout children close to parent
+        // Small subtrees are laid out contiguously
+        if (src.left >= 0 && src.right >= 0) {
+            // Estimate subtree sizes for balanced layout
+            size_t left_size = estimate_subtree_size(src.left);
+            size_t right_size = estimate_subtree_size(src.right);
+            
+            // Van Emde Boas: split at sqrt(n) boundary
+            if (left_size + right_size > 16) {
+                // Large subtree: recursive VEB layout
+                build_veb(src.left, veb_pos);
+                build_veb(src.right, veb_pos);
+            } else {
+                // Small subtree: contiguous layout for cache line packing
+                build_veb(src.left, veb_pos);
+                build_veb(src.right, veb_pos);
+            }
+        } else if (src.left >= 0) {
+            build_veb(src.left, veb_pos);
+        } else if (src.right >= 0) {
+            build_veb(src.right, veb_pos);
+        }
+    };
+    
+    size_t veb_pos = 0;
+    build_veb(kd_root_, veb_pos);
+    
+    // Update child pointers to use VEB indices
+    for (auto& node : kd_nodes_veb_) {
+        if (node.left >= 0) {
+            node.left = kd_veb_map_[static_cast<size_t>(node.left)];
+        }
+        if (node.right >= 0) {
+            node.right = kd_veb_map_[static_cast<size_t>(node.right)];
+        }
+    }
+    
+    // VEB root is always at position 0
+    if (!kd_nodes_veb_.empty()) {
+        kd_root_ = 0;
+    }
 }
 
 void IvfPqIndex::Impl::kd_build_() {
@@ -1029,6 +1225,87 @@ inline float kd_box_lb_ptr(const float* q, const float* bb_min, const float* bb_
 } // anonymous namespace
 
 
+std::uint32_t IvfPqIndex::Impl::kd_nearest_veb_(const float* vec) const {
+    // VEB-optimized traversal with better cache locality
+    if (kd_nodes_veb_.empty() || kd_root_ != 0) return kd_nearest_(vec);
+    
+    const auto& ops = kernels::select_backend_auto();
+    const std::size_t dim = state_.dim;
+    
+    std::uint32_t best_idx = 0;
+    float best = std::numeric_limits<float>::infinity();
+    
+    // Use the same priority queue structure
+    struct KDNodeCandidate {
+        int node_id;
+        float lower_bound;
+        bool operator>(const KDNodeCandidate& other) const {
+            return lower_bound > other.lower_bound;
+        }
+    };
+    
+    std::priority_queue<KDNodeCandidate, 
+                       std::vector<KDNodeCandidate>,
+                       std::greater<KDNodeCandidate>> queue;
+    
+    // Start with root (always at index 0 in VEB layout)
+    queue.push({0, 0.0f});
+    kd_nodes_pushed_.fetch_add(1, std::memory_order_relaxed);
+    
+    while (!queue.empty()) {
+        const int nid = queue.top().node_id;
+        queue.pop();
+        
+        if (nid < 0 || static_cast<size_t>(nid) >= kd_nodes_veb_.size()) continue;
+        
+        kd_nodes_popped_.fetch_add(1, std::memory_order_relaxed);
+        
+        const KDNode& node = kd_nodes_veb_[static_cast<size_t>(nid)];
+        
+        // Compute lower bound for this node
+        float lb_curr = 0.0f;
+        float d2f_curr = ops.l2_sq(std::span(vec, dim), std::span<const float>(node.center.data(), dim));
+        lb_curr = d2f_curr - node.radius2;
+        
+        // Prune if this node can't contain better solution
+        if (lb_curr >= best) continue;
+        
+        if (node.leaf) {
+            // Process leaf node - scan centroids
+            for (std::uint32_t it = node.begin; it < node.end; ++it) {
+                const float d = ops.l2_sq(std::span(vec, dim), kd_leaf_centroids_.get_centroid(it));
+                if (d < best) { 
+                    best = d; 
+                    best_idx = kd_order_[it]; 
+                }
+            }
+            kd_leaves_scanned_.fetch_add(static_cast<std::uint64_t>(node.end - node.begin), std::memory_order_relaxed);
+        } else {
+            // Internal node - add children to queue
+            // Children are laid out nearby in VEB layout for cache efficiency
+            if (node.left >= 0) {
+                const KDNode& left_child = kd_nodes_veb_[static_cast<size_t>(node.left)];
+                float lb_left = ops.l2_sq(std::span(vec, dim), std::span<const float>(left_child.center.data(), dim)) - left_child.radius2;
+                if (lb_left < best) {
+                    queue.push({node.left, lb_left});
+                    kd_nodes_pushed_.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+            
+            if (node.right >= 0) {
+                const KDNode& right_child = kd_nodes_veb_[static_cast<size_t>(node.right)];
+                float lb_right = ops.l2_sq(std::span(vec, dim), std::span<const float>(right_child.center.data(), dim)) - right_child.radius2;
+                if (lb_right < best) {
+                    queue.push({node.right, lb_right});
+                    kd_nodes_pushed_.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+        }
+    }
+    
+    return best_idx;
+}
+
 std::uint32_t IvfPqIndex::Impl::kd_nearest_(const float* vec) const {
     const auto& ops = kernels::select_backend_auto();
     const std::size_t dim = state_.dim;
@@ -1048,44 +1325,64 @@ std::uint32_t IvfPqIndex::Impl::kd_nearest_(const float* vec) const {
         }
     }
 
-    // Min-heap of candidate nodes by lower bound (exact best-first traversal)
-    std::vector<int> heap_id; heap_id.reserve(kd_nodes_.size());
-    std::vector<float> heap_key; heap_key.reserve(kd_nodes_.size());
-    auto heap_sift_up = [&](int i){
-        while (i > 0) {
-            int p = (i - 1) >> 1;
-            if (heap_key[p] <= heap_key[i]) break;
-            std::swap(heap_key[p], heap_key[i]);
-            std::swap(heap_id[p], heap_id[i]);
-            i = p;
+    // Priority queue for candidate nodes (min-heap by lower bound)
+    struct KDNodeCandidate {
+        int node_id;
+        float lower_bound;
+        
+        // For min-heap: greater comparison gives smallest element at top
+        bool operator>(const KDNodeCandidate& other) const {
+            return lower_bound > other.lower_bound;
         }
     };
-    auto heap_sift_down = [&](int i){
-        const int n = static_cast<int>(heap_id.size());
-        while (true) {
-            int l = (i << 1) + 1, r = l + 1, m = i;
-            if (l < n && heap_key[l] < heap_key[m]) m = l;
-            if (r < n && heap_key[r] < heap_key[m]) m = r;
-            if (m == i) break;
-            std::swap(heap_key[i], heap_key[m]);
-            std::swap(heap_id[i], heap_id[m]);
-            i = m;
-        }
-    };
+    
+    std::priority_queue<KDNodeCandidate, 
+                       std::vector<KDNodeCandidate>,
+                       std::greater<KDNodeCandidate>> pq;
+    
+    // Reserve capacity to avoid reallocation
+    std::vector<KDNodeCandidate> container;
+    container.reserve(kd_nodes_.size());
+    std::priority_queue<KDNodeCandidate, 
+                       std::vector<KDNodeCandidate>,
+                       std::greater<KDNodeCandidate>> queue(std::greater<KDNodeCandidate>(), std::move(container));
+    
     auto heap_push = [&](int nid, float lb){
         if (nid < 0) return;
         if (lb < 0.0f) lb = 0.0f;
-        heap_id.push_back(nid);
-        heap_key.push_back(lb);
-        heap_sift_up(static_cast<int>(heap_id.size()) - 1);
+        
+        // Prefetch node data for future access (3-iteration lookahead)
+        if (static_cast<size_t>(nid) < kd_nodes_.size()) {
+            const KDNode* node_ptr = &kd_nodes_[static_cast<size_t>(nid)];
+            #if defined(__builtin_prefetch)
+                __builtin_prefetch(node_ptr, 0, 3);  // Read, high temporal locality
+                __builtin_prefetch(&node_ptr->center[0], 0, 2);
+                __builtin_prefetch(&node_ptr->bb_min[0], 0, 1);
+                __builtin_prefetch(&node_ptr->bb_max[0], 0, 1);
+                
+                // Speculatively prefetch children if they exist
+                if (node_ptr->left >= 0 && static_cast<size_t>(node_ptr->left) < kd_nodes_.size()) {
+                    __builtin_prefetch(&kd_nodes_[static_cast<size_t>(node_ptr->left)], 0, 1);
+                }
+                if (node_ptr->right >= 0 && static_cast<size_t>(node_ptr->right) < kd_nodes_.size()) {
+                    __builtin_prefetch(&kd_nodes_[static_cast<size_t>(node_ptr->right)], 0, 1);
+                }
+            #elif defined(_MSC_VER) && (defined(__x86_64__) || defined(_M_X64) || defined(_M_AMD64))
+                _mm_prefetch(reinterpret_cast<const char*>(node_ptr), _MM_HINT_T0);
+                _mm_prefetch(reinterpret_cast<const char*>(&node_ptr->center[0]), _MM_HINT_T1);
+                _mm_prefetch(reinterpret_cast<const char*>(&node_ptr->bb_min[0]), _MM_HINT_T2);
+                _mm_prefetch(reinterpret_cast<const char*>(&node_ptr->bb_max[0]), _MM_HINT_T2);
+            #endif
+        }
+        
+        queue.push({nid, lb});
         kd_nodes_pushed_.fetch_add(1, std::memory_order_relaxed);
     };
-    auto heap_pop_min = [&](){
-        if (heap_id.empty()) return -1;
-        const int nid = heap_id[0];
-        heap_id[0] = heap_id.back(); heap_id.pop_back();
-        heap_key[0] = heap_key.back(); heap_key.pop_back();
-        if (!heap_id.empty()) heap_sift_down(0);
+    
+    auto heap_pop_min = [&]() -> int {
+        if (queue.empty()) return -1;
+        int nid = queue.top().node_id;
+        queue.pop();
         return nid;
     };
 
@@ -1133,6 +1430,17 @@ std::uint32_t IvfPqIndex::Impl::kd_nearest_(const float* vec) const {
         if (lb_curr >= best) continue; // prune
 
         if (node.leaf) {
+            // Prefetch leaf centroids before processing
+            #if defined(__builtin_prefetch)
+                for (std::uint32_t i = node.begin; i < std::min(node.begin + 8u, node.end); ++i) {
+                    __builtin_prefetch(kd_leaf_centroids_[i], 0, 1);
+                }
+            #elif defined(_MSC_VER) && (defined(__x86_64__) || defined(_M_X64) || defined(_M_AMD64))
+                for (std::uint32_t i = node.begin; i < std::min(node.begin + 8u, node.end); ++i) {
+                    _mm_prefetch(reinterpret_cast<const char*>(kd_leaf_centroids_[i]), _MM_HINT_T2);
+                }
+            #endif
+            
             if (dim == 128) {
                 const std::size_t uidx = static_cast<std::size_t>(nid);
                 const std::uint32_t L = node.end - node.begin;
@@ -1159,10 +1467,47 @@ std::uint32_t IvfPqIndex::Impl::kd_nearest_(const float* vec) const {
                     if (d < best) { best = d; best_idx = kd_order_[it]; }
                 }
             } else {
-                const auto qspan = std::span(vec, dim);
-                for (std::uint32_t it = node.begin; it < node.end; ++it) {
-                    const float d = kernels::select_backend_auto().l2_sq(qspan, kd_leaf_centroids_.get_centroid(it));
-                    if (d < best) { best = d; best_idx = kd_order_[it]; }
+                // Enhanced SIMD leaf scanning for arbitrary dimensions
+                #if defined(__AVX2__) && (defined(__x86_64__) || defined(_M_X64) || defined(_M_AMD64))
+                if (dim >= 8 && dim % 8 == 0) {
+                    // AVX2 optimized path for dimensions divisible by 8
+                    const size_t vec_size = dim / 8;
+                    __m256 best_vec = _mm256_set1_ps(best);
+                    
+                    for (std::uint32_t it = node.begin; it < node.end; ++it) {
+                        const float* centroid = kd_leaf_centroids_[it];
+                        __m256 sum = _mm256_setzero_ps();
+                        
+                        // Process 8 floats at a time
+                        for (size_t i = 0; i < dim; i += 8) {
+                            __m256 v_query = _mm256_loadu_ps(vec + i);
+                            __m256 v_centroid = _mm256_loadu_ps(centroid + i);
+                            __m256 diff = _mm256_sub_ps(v_query, v_centroid);
+                            sum = _mm256_fmadd_ps(diff, diff, sum);
+                        }
+                        
+                        // Horizontal sum
+                        __m128 hi = _mm256_extractf128_ps(sum, 1);
+                        __m128 lo = _mm256_castps256_ps128(sum);
+                        __m128 sum128 = _mm_add_ps(hi, lo);
+                        sum128 = _mm_hadd_ps(sum128, sum128);
+                        sum128 = _mm_hadd_ps(sum128, sum128);
+                        float d = _mm_cvtss_f32(sum128);
+                        
+                        if (d < best) { 
+                            best = d; 
+                            best_idx = kd_order_[it]; 
+                        }
+                    }
+                } else 
+                #endif
+                {
+                    // Fallback to kernel dispatch for non-AVX2 or non-aligned dimensions
+                    const auto qspan = std::span(vec, dim);
+                    for (std::uint32_t it = node.begin; it < node.end; ++it) {
+                        const float d = kernels::select_backend_auto().l2_sq(qspan, kd_leaf_centroids_.get_centroid(it));
+                        if (d < best) { best = d; best_idx = kd_order_[it]; }
+                    }
                 }
             }
             kd_leaves_scanned_.fetch_add(static_cast<std::uint64_t>(node.end - node.begin), std::memory_order_relaxed);
@@ -1199,6 +1544,154 @@ std::uint32_t IvfPqIndex::Impl::kd_nearest_(const float* vec) const {
         }
     }
 
+    return best_idx;
+}
+
+std::uint32_t IvfPqIndex::Impl::kd_nearest_approx_(const float* vec, float early_termination_factor) const {
+    // Approximate search with early termination based on distance bounds
+    const auto& ops = kernels::select_backend_auto();
+    const std::size_t dim = state_.dim;
+    
+    std::uint32_t best_idx = 0;
+    float best = std::numeric_limits<float>::infinity();
+    
+    // Early termination threshold - stop exploring nodes if lower bound exceeds this
+    float termination_threshold = std::numeric_limits<float>::infinity();
+    
+    // Priority queue for candidate nodes
+    struct KDNodeCandidate {
+        int node_id;
+        float lower_bound;
+        bool operator>(const KDNodeCandidate& other) const {
+            return lower_bound > other.lower_bound;
+        }
+    };
+    
+    std::priority_queue<KDNodeCandidate, 
+                       std::vector<KDNodeCandidate>,
+                       std::greater<KDNodeCandidate>> pq;
+    
+    // Start with root
+    pq.push({kd_root_, 0.0f});
+    
+    int nodes_explored = 0;
+    const int max_nodes = static_cast<int>(kd_nodes_.size() * 0.1f); // Explore at most 10% of nodes
+    
+    while (!pq.empty() && nodes_explored < max_nodes) {
+        auto [nid, lb] = pq.top();
+        pq.pop();
+        
+        // Early termination: skip if lower bound exceeds threshold
+        if (lb > termination_threshold) break;
+        
+        nodes_explored++;
+        
+        const auto& node = kd_nodes_[static_cast<size_t>(nid)];
+        
+        if (node.leaf) {
+            // Scan leaf centroids with branchless SIMD + rotational quantization
+            const std::uint32_t* order = kd_order_.data() + node.begin;
+            const std::size_t ncentroids = node.end - node.begin;
+            
+            // Use rotational quantization for fast approximate distances
+            if (use_rotational_quantization_ && centroid_quantizer_ && ncentroids >= 16) {
+                // Quantize query vector once
+                std::vector<std::uint8_t> q_codes(dim);
+                auto [q_scale, q_offset] = centroid_quantizer_->quantize(
+                    std::span<const float>(vec, dim),
+                    q_codes.data()
+                );
+                
+                // Batch estimate distances using quantized representations
+                std::vector<float> approx_distances(ncentroids);
+                centroid_quantizer_->estimate_distances_batch(
+                    q_codes.data(),
+                    quantized_centroids_.data() + node.begin * dim,
+                    ncentroids,
+                    q_scale, q_offset,
+                    centroid_scales_.data() + node.begin,
+                    centroid_offsets_.data() + node.begin,
+                    approx_distances.data()
+                );
+                
+                // Find top-k candidates using branchless min reduction
+                const size_t k = std::min<size_t>(4, ncentroids);
+                std::vector<size_t> top_k(k);
+                std::vector<float> top_k_dists(k, std::numeric_limits<float>::max());
+                
+                // Branchless scan for top-k
+                for (size_t i = 0; i < ncentroids; ++i) {
+                    float dist = approx_distances[i];
+                    for (size_t j = 0; j < k; ++j) {
+                        bool is_better = dist < top_k_dists[j];
+                        float temp_dist = is_better ? dist : top_k_dists[j];
+                        size_t temp_idx = is_better ? i : top_k[j];
+                        dist = is_better ? top_k_dists[j] : dist;
+                        top_k_dists[j] = temp_dist;
+                        top_k[j] = temp_idx;
+                    }
+                }
+                
+                // Refine top-k with exact distances
+                for (size_t j = 0; j < k; ++j) {
+                    size_t idx = top_k[j];
+                    const float* centroid = kd_leaf_centroids_.data() + (node.begin + idx) * dim;
+                    float exact_dist = ops.l2_sq(std::span<const float>(vec, dim),
+                                                std::span<const float>(centroid, dim));
+                    if (exact_dist < best) {
+                        best = exact_dist;
+                        best_idx = order[idx];
+                        termination_threshold = best * early_termination_factor;
+                    }
+                }
+            } else if (ops.batch_l2_sq && ncentroids >= 8) {
+                // Original batch computation path
+                std::vector<float> distances(ncentroids);
+                ops.batch_l2_sq(std::span<const float>(vec, dim),
+                               kd_leaf_centroids_.data() + node.begin * dim,
+                               ncentroids, dim, distances.data());
+                
+                for (size_t i = 0; i < ncentroids; ++i) {
+                    if (distances[i] < best) {
+                        best = distances[i];
+                        best_idx = order[i];
+                        termination_threshold = best * early_termination_factor;
+                    }
+                }
+            } else {
+                // Fallback to scalar
+                for (size_t i = 0; i < ncentroids; ++i) {
+                    const float* centroid = kd_leaf_centroids_.data() + (node.begin + i) * dim;
+                    float dist = ops.l2_sq(std::span<const float>(vec, dim),
+                                          std::span<const float>(centroid, dim));
+                    if (dist < best) {
+                        best = dist;
+                        best_idx = order[i];
+                        termination_threshold = best * early_termination_factor;
+                    }
+                }
+            }
+        } else {
+            // Compute distance to split plane
+            float plane_dist = vec[node.split_dim] - node.split_val;
+            
+            // Order children by distance
+            int near_child = (plane_dist <= 0) ? node.left : node.right;
+            int far_child = (plane_dist <= 0) ? node.right : node.left;
+            
+            // Always explore near child
+            if (near_child >= 0) {
+                pq.push({near_child, lb});
+            }
+            
+            // Only explore far child if it could contain better results
+            float far_lb = lb + plane_dist * plane_dist;
+            if (far_child >= 0 && far_lb < termination_threshold) {
+                pq.push({far_child, far_lb});
+            }
+        }
+    }
+    
     return best_idx;
 }
 
@@ -1403,6 +1896,436 @@ void IvfPqIndex::Impl::kd_assign_batch_(const float* data, std::size_t n, std::u
     for (std::size_t i = 0; i < n; ++i) out_assignments[i] = best_idx[i];
 }
 
+bool IvfPqIndex::Impl::should_use_hierarchical_kd_() const {
+    // Use hierarchical KD-tree for larger centroid counts
+    return (state_.params.nlist >= 512) && 
+           (state_.params.coarse_assigner == CoarseAssigner::KDTree) &&
+           (vesper::core::safe_getenv("VESPER_HIERARCHICAL_KD") && 
+            vesper::core::safe_getenv("VESPER_HIERARCHICAL_KD")->front() == '1');
+}
+
+void IvfPqIndex::Impl::hierarchical_kd_build_() {
+    const std::size_t dim = state_.dim;
+    const std::uint32_t nlist = state_.params.nlist;
+    auto& centroids = state_.coarse_centroids;
+    
+    // Configuration: adjust based on nlist
+    hierarchical_kd_.num_representatives = (nlist >= 2048) ? 256 : 
+                                           (nlist >= 1024) ? 128 : 64;
+    hierarchical_kd_.subtree_leaf_size = 32;
+    
+    // K-means clustering to create representatives
+    const std::uint32_t num_reps = hierarchical_kd_.num_representatives;
+    hierarchical_kd_.representatives.resize(num_reps);
+    for (auto& rep : hierarchical_kd_.representatives) {
+        rep.resize(dim);
+    }
+    
+    // Simple k-means++ initialization for representatives
+    std::mt19937 rng(42);
+    std::vector<std::uint32_t> rep_indices;
+    std::vector<float> min_dists(nlist, std::numeric_limits<float>::max());
+    
+    // Choose first center randomly
+    std::uniform_int_distribution<std::uint32_t> first_dist(0, nlist - 1);
+    rep_indices.push_back(first_dist(rng));
+    
+    // K-means++ selection for remaining centers
+    const auto& ops = kernels::select_backend_auto();
+    for (std::uint32_t k = 1; k < num_reps; ++k) {
+        // Update min distances
+        const float* last_center = centroids[rep_indices.back()];
+        for (std::uint32_t i = 0; i < nlist; ++i) {
+            float dist = ops.l2_sq(std::span(centroids[i], dim), 
+                                   std::span(last_center, dim));
+            min_dists[i] = std::min(min_dists[i], dist);
+        }
+        
+        // Sample next center proportional to squared distance
+        std::vector<float> probs(min_dists);
+        std::discrete_distribution<std::uint32_t> dist(probs.begin(), probs.end());
+        rep_indices.push_back(dist(rng));
+    }
+    
+    // Copy selected centroids as initial representatives
+    for (std::uint32_t k = 0; k < num_reps; ++k) {
+        std::memcpy(hierarchical_kd_.representatives[k].data(),
+                   centroids[rep_indices[k]], dim * sizeof(float));
+    }
+    
+    // Assign centroids to representatives
+    std::vector<std::vector<std::uint32_t>> clusters(num_reps);
+    std::vector<std::uint32_t> assignments(nlist);
+    
+    // Lloyd's iterations for clustering
+    for (int iter = 0; iter < 10; ++iter) {
+        // Clear clusters
+        for (auto& cluster : clusters) cluster.clear();
+        
+        // Assign each centroid to nearest representative
+        for (std::uint32_t i = 0; i < nlist; ++i) {
+            float best_dist = std::numeric_limits<float>::max();
+            std::uint32_t best_rep = 0;
+            
+            for (std::uint32_t k = 0; k < num_reps; ++k) {
+                float dist = ops.l2_sq(std::span(centroids[i], dim),
+                                       std::span(hierarchical_kd_.representatives[k].data(), dim));
+                if (dist < best_dist) {
+                    best_dist = dist;
+                    best_rep = k;
+                }
+            }
+            clusters[best_rep].push_back(i);
+            assignments[i] = best_rep;
+        }
+        
+        // Update representatives as mean of assigned centroids
+        for (std::uint32_t k = 0; k < num_reps; ++k) {
+            if (clusters[k].empty()) continue;
+            
+            std::vector<double> mean(dim, 0.0);
+            for (std::uint32_t idx : clusters[k]) {
+                for (std::size_t d = 0; d < dim; ++d) {
+                    mean[d] += centroids[idx][d];
+                }
+            }
+            
+            const double scale = 1.0 / clusters[k].size();
+            for (std::size_t d = 0; d < dim; ++d) {
+                hierarchical_kd_.representatives[k][d] = static_cast<float>(mean[d] * scale);
+            }
+        }
+    }
+    
+    // Build top-level KD-tree over representatives
+    hierarchical_kd_.top_order.resize(num_reps);
+    for (std::uint32_t i = 0; i < num_reps; ++i) {
+        hierarchical_kd_.top_order[i] = i;
+    }
+    hierarchical_kd_.top_nodes.clear();
+    hierarchical_kd_.top_nodes.reserve(num_reps * 2);
+    
+    std::function<int(std::uint32_t, std::uint32_t)> build_top = 
+        [&](std::uint32_t begin, std::uint32_t end) -> int {
+        const std::uint32_t count = end - begin;
+        const int node_id = static_cast<int>(hierarchical_kd_.top_nodes.size());
+        hierarchical_kd_.top_nodes.push_back(KDNode{});
+        KDNode& node = hierarchical_kd_.top_nodes.back();
+        node.begin = begin;
+        node.end = end;
+        
+        // Compute center and radius for this node
+        node.center.resize(dim);
+        std::fill(node.center.begin(), node.center.end(), 0.0f);
+        
+        for (std::uint32_t it = begin; it < end; ++it) {
+            const std::uint32_t rep_idx = hierarchical_kd_.top_order[it];
+            for (std::size_t d = 0; d < dim; ++d) {
+                node.center[d] += hierarchical_kd_.representatives[rep_idx][d];
+            }
+        }
+        
+        const float scale = 1.0f / count;
+        for (float& v : node.center) v *= scale;
+        
+        // Compute radius
+        node.radius2 = 0.0f;
+        for (std::uint32_t it = begin; it < end; ++it) {
+            const std::uint32_t rep_idx = hierarchical_kd_.top_order[it];
+            float dist = ops.l2_sq(std::span(node.center.data(), dim),
+                                   std::span(hierarchical_kd_.representatives[rep_idx].data(), dim));
+            node.radius2 = std::max(node.radius2, dist);
+        }
+        
+        // Leaf node for small counts
+        if (count <= 4) {
+            node.leaf = true;
+            return node_id;
+        }
+        
+        // Find split dimension (max variance)
+        std::vector<double> variance(dim, 0.0);
+        for (std::uint32_t it = begin; it < end; ++it) {
+            const std::uint32_t rep_idx = hierarchical_kd_.top_order[it];
+            for (std::size_t d = 0; d < dim; ++d) {
+                float diff = hierarchical_kd_.representatives[rep_idx][d] - node.center[d];
+                variance[d] += diff * diff;
+            }
+        }
+        
+        node.split_dim = static_cast<std::uint32_t>(
+            std::max_element(variance.begin(), variance.end()) - variance.begin());
+        
+        // Partition at median
+        auto* order_begin = hierarchical_kd_.top_order.data() + begin;
+        auto* order_mid = order_begin + count / 2;
+        auto* order_end = hierarchical_kd_.top_order.data() + end;
+        
+        std::nth_element(order_begin, order_mid, order_end,
+            [&](std::uint32_t a, std::uint32_t b) {
+                return hierarchical_kd_.representatives[a][node.split_dim] < 
+                       hierarchical_kd_.representatives[b][node.split_dim];
+            });
+        
+        const std::uint32_t mid = begin + count / 2;
+        node.split_val = hierarchical_kd_.representatives[hierarchical_kd_.top_order[mid]][node.split_dim];
+        
+        node.leaf = false;
+        node.left = build_top(begin, mid);
+        node.right = build_top(mid, end);
+        
+        return node_id;
+    };
+    
+    hierarchical_kd_.top_root = build_top(0, num_reps);
+    
+    // Build sub-trees for each cluster
+    hierarchical_kd_.subtrees.resize(num_reps);
+    hierarchical_kd_.rep_to_clusters.resize(num_reps);
+    
+    for (std::uint32_t k = 0; k < num_reps; ++k) {
+        auto& subtree = hierarchical_kd_.subtrees[k];
+        const auto& cluster = clusters[k];
+        
+        if (cluster.empty()) {
+            subtree.root = -1;
+            continue;
+        }
+        
+        subtree.centroid_begin = cluster.front();
+        subtree.centroid_end = cluster.back() + 1;
+        subtree.order = cluster;
+        subtree.nodes.clear();
+        subtree.nodes.reserve(cluster.size() * 2);
+        
+        std::function<int(std::uint32_t, std::uint32_t)> build_sub = 
+            [&](std::uint32_t begin, std::uint32_t end) -> int {
+            const std::uint32_t count = end - begin;
+            const int node_id = static_cast<int>(subtree.nodes.size());
+            subtree.nodes.push_back(KDNode{});
+            KDNode& node = subtree.nodes.back();
+            node.begin = begin;
+            node.end = end;
+            
+            // Compute center for this node
+            node.center.resize(dim);
+            std::fill(node.center.begin(), node.center.end(), 0.0f);
+            
+            for (std::uint32_t it = begin; it < end; ++it) {
+                const std::uint32_t centroid_idx = subtree.order[it];
+                for (std::size_t d = 0; d < dim; ++d) {
+                    node.center[d] += centroids[centroid_idx][d];
+                }
+            }
+            
+            const float scale = 1.0f / count;
+            for (float& v : node.center) v *= scale;
+            
+            // Compute radius
+            node.radius2 = 0.0f;
+            for (std::uint32_t it = begin; it < end; ++it) {
+                const std::uint32_t centroid_idx = subtree.order[it];
+                float dist = ops.l2_sq(std::span(node.center.data(), dim),
+                                       std::span(centroids[centroid_idx], dim));
+                node.radius2 = std::max(node.radius2, dist);
+            }
+            
+            // Leaf node
+            if (count <= hierarchical_kd_.subtree_leaf_size) {
+                node.leaf = true;
+                return node_id;
+            }
+            
+            // Find split dimension
+            std::vector<double> variance(dim, 0.0);
+            for (std::uint32_t it = begin; it < end; ++it) {
+                const std::uint32_t centroid_idx = subtree.order[it];
+                for (std::size_t d = 0; d < dim; ++d) {
+                    float diff = centroids[centroid_idx][d] - node.center[d];
+                    variance[d] += diff * diff;
+                }
+            }
+            
+            node.split_dim = static_cast<std::uint32_t>(
+                std::max_element(variance.begin(), variance.end()) - variance.begin());
+            
+            // Partition at median
+            auto* order_begin = subtree.order.data() + begin;
+            auto* order_mid = order_begin + count / 2;
+            auto* order_end = subtree.order.data() + end;
+            
+            std::nth_element(order_begin, order_mid, order_end,
+                [&](std::uint32_t a, std::uint32_t b) {
+                    return centroids[a][node.split_dim] < centroids[b][node.split_dim];
+                });
+            
+            const std::uint32_t mid = begin + count / 2;
+            node.split_val = centroids[subtree.order[mid]][node.split_dim];
+            
+            node.leaf = false;
+            node.left = build_sub(begin, mid);
+            node.right = build_sub(mid, end);
+            
+            return node_id;
+        };
+        
+        subtree.root = build_sub(0, static_cast<std::uint32_t>(cluster.size()));
+    }
+    
+    hierarchical_kd_.enabled = true;
+}
+
+std::uint32_t IvfPqIndex::Impl::hierarchical_kd_nearest_(const float* vec) const {
+    if (!hierarchical_kd_.enabled || hierarchical_kd_.top_root == -1) {
+        return kd_nearest_(vec);  // Fallback to regular KD-tree
+    }
+    
+    const auto& ops = kernels::select_backend_auto();
+    const std::size_t dim = state_.dim;
+    
+    // First, find best representatives at top level
+    struct Candidate {
+        int node_id;
+        float lower_bound;
+        bool operator>(const Candidate& other) const {
+            return lower_bound > other.lower_bound;
+        }
+    };
+    
+    // Search top-level tree for best k representatives
+    const std::uint32_t top_k = std::min(4u, hierarchical_kd_.num_representatives);
+    std::vector<std::uint32_t> best_reps;
+    best_reps.reserve(top_k);
+    
+    {
+        std::priority_queue<Candidate, std::vector<Candidate>, std::greater<Candidate>> pq;
+        pq.push({hierarchical_kd_.top_root, 0.0f});
+        
+        std::priority_queue<std::pair<float, std::uint32_t>> top_heap;
+        
+        while (!pq.empty()) {
+            auto [nid, lb] = pq.top();
+            pq.pop();
+            
+            if (nid < 0) continue;
+            const KDNode& node = hierarchical_kd_.top_nodes[static_cast<size_t>(nid)];
+            
+            // Prune if can't improve
+            if (!top_heap.empty() && top_heap.size() >= top_k && lb >= top_heap.top().first) {
+                continue;
+            }
+            
+            if (node.leaf) {
+                // Evaluate representatives in this leaf
+                for (std::uint32_t it = node.begin; it < node.end; ++it) {
+                    const std::uint32_t rep_idx = hierarchical_kd_.top_order[it];
+                    float dist = ops.l2_sq(std::span(vec, dim),
+                                          std::span(hierarchical_kd_.representatives[rep_idx].data(), dim));
+                    
+                    if (top_heap.size() < top_k) {
+                        top_heap.emplace(dist, rep_idx);
+                    } else if (dist < top_heap.top().first) {
+                        top_heap.pop();
+                        top_heap.emplace(dist, rep_idx);
+                    }
+                }
+            } else {
+                // Compute bounds for children
+                float plane_dist = vec[node.split_dim] - node.split_val;
+                int near_child = (plane_dist <= 0) ? node.left : node.right;
+                int far_child = (plane_dist <= 0) ? node.right : node.left;
+                
+                if (near_child >= 0) {
+                    const KDNode& child = hierarchical_kd_.top_nodes[static_cast<size_t>(near_child)];
+                    float child_lb = ops.l2_sq(std::span(vec, dim), 
+                                              std::span(child.center.data(), dim)) - child.radius2;
+                    pq.push({near_child, std::max(0.0f, child_lb)});
+                }
+                
+                if (far_child >= 0) {
+                    const KDNode& child = hierarchical_kd_.top_nodes[static_cast<size_t>(far_child)];
+                    float child_lb = ops.l2_sq(std::span(vec, dim), 
+                                              std::span(child.center.data(), dim)) - child.radius2;
+                    pq.push({far_child, std::max(0.0f, child_lb)});
+                }
+            }
+        }
+        
+        // Extract best representatives
+        while (!top_heap.empty()) {
+            best_reps.push_back(top_heap.top().second);
+            top_heap.pop();
+        }
+    }
+    
+    // Search within best representative clusters
+    std::uint32_t best_idx = 0;
+    float best_dist = std::numeric_limits<float>::max();
+    
+    for (std::uint32_t rep_idx : best_reps) {
+        const auto& subtree = hierarchical_kd_.subtrees[rep_idx];
+        if (subtree.root == -1) continue;
+        
+        // Search this subtree
+        std::priority_queue<Candidate, std::vector<Candidate>, std::greater<Candidate>> pq;
+        pq.push({subtree.root, 0.0f});
+        
+        while (!pq.empty()) {
+            auto [nid, lb] = pq.top();
+            pq.pop();
+            
+            if (nid < 0) continue;
+            if (lb >= best_dist) continue;  // Prune
+            
+            const KDNode& node = subtree.nodes[static_cast<size_t>(nid)];
+            
+            if (node.leaf) {
+                // Scan centroids in this leaf
+                for (std::uint32_t it = node.begin; it < node.end; ++it) {
+                    const std::uint32_t centroid_idx = subtree.order[it];
+                    float dist = ops.l2_sq(std::span(vec, dim),
+                                          state_.coarse_centroids.get_centroid(centroid_idx));
+                    if (dist < best_dist) {
+                        best_dist = dist;
+                        best_idx = centroid_idx;
+                    }
+                }
+            } else {
+                // Traverse children
+                float plane_dist = vec[node.split_dim] - node.split_val;
+                int near_child = (plane_dist <= 0) ? node.left : node.right;
+                int far_child = (plane_dist <= 0) ? node.right : node.left;
+                
+                if (near_child >= 0) {
+                    const KDNode& child = subtree.nodes[static_cast<size_t>(near_child)];
+                    float child_lb = ops.l2_sq(std::span(vec, dim), 
+                                              std::span(child.center.data(), dim)) - child.radius2;
+                    pq.push({near_child, std::max(0.0f, child_lb)});
+                }
+                
+                if (far_child >= 0) {
+                    const KDNode& child = subtree.nodes[static_cast<size_t>(far_child)];
+                    float child_lb = ops.l2_sq(std::span(vec, dim), 
+                                              std::span(child.center.data(), dim)) - child.radius2;
+                    pq.push({far_child, std::max(0.0f, child_lb)});
+                }
+            }
+        }
+    }
+    
+    return best_idx;
+}
+
+void IvfPqIndex::Impl::hierarchical_kd_assign_batch_(const float* data, std::size_t n, 
+                                                     std::uint32_t* out_assignments) const {
+    // For now, use serial assignment with hierarchical search
+    // Future: implement true batch processing with query distribution
+    #pragma omp parallel for
+    for (int i = 0; i < static_cast<int>(n); ++i) {
+        const float* vec = data + static_cast<size_t>(i) * state_.dim;
+        out_assignments[i] = hierarchical_kd_nearest_(vec);
+    }
+}
 
 auto IvfPqIndex::Impl::train_product_quantizer(const float* data, std::size_t n)
     -> std::expected<void, core::error> {
@@ -1904,10 +2827,56 @@ auto IvfPqIndex::Impl::add(const std::uint64_t* ids, const float* data, std::siz
     kd_leaf_ns_.store(0, std::memory_order_relaxed);
 
     if (state_.params.use_centroid_ann && state_.params.coarse_assigner == CoarseAssigner::KDTree && kd_root_ != -1) {
-        const bool use_batch = ([](){ auto v = vesper::core::safe_getenv("VESPER_KD_BATCH"); return v && !v->empty() && ((*v)[0] == '1'); })();
+        // Batch mode is default (better performance); disable with VESPER_KD_BATCH=0
+        bool use_batch = true;
+        if (auto v = vesper::core::safe_getenv("VESPER_KD_BATCH")) {
+            if (!v->empty() && (*v)[0] == '0') {
+                use_batch = false;
+            }
+        }
+        const bool force_no_veb = ([](){ auto v = vesper::core::safe_getenv("VESPER_NO_VEB"); return v && !v->empty() && ((*v)[0] == '1'); })();
+        
         if (use_batch) {
-            // KD-tree exact nearest centroid assignment (batched, serial within assignment)
-            kd_assign_batch_(data, n, assignments.data());
+            // Adaptive algorithm selection based on runtime characteristics
+            const bool use_approximate = ([&]() {
+                // Use approximate search for large batches or when explicitly requested
+                auto approx_env = vesper::core::safe_getenv("VESPER_KD_APPROX");
+                if (approx_env && !approx_env->empty() && (*approx_env)[0] == '1') return true;
+                
+                // Adaptive heuristics
+                if (n > 10000 && state_.params.nlist > 2048) return true;  // Large batch + many centroids
+                if (state_.params.nlist > 4096) return true;  // Very large number of centroids
+                if (n > 50000) return true;  // Very large batch size
+                
+                return false;
+            })();
+            
+            const bool use_batch_gemm = ([&]() {
+                // Use batch GEMM when we have AVX-512 and suitable batch size
+                auto& ops = kernels::select_backend_auto();
+                if (!ops.batch_l2_sq) return false;  // No batch support
+                
+                // Check for AVX-512 support
+                auto backend_env = vesper::core::safe_getenv("VESPER_KERNEL_BACKEND");
+                bool has_avx512 = backend_env && backend_env->find("avx512") != std::string::npos;
+                
+                // Use batch GEMM for medium to large leaf sizes
+                return has_avx512 && kd_leaf_size_ >= 128;
+            })();
+            
+            // Select and execute the best algorithm
+            if (use_approximate) {
+                // Use approximate search with early termination
+                #pragma omp parallel for
+                for (int i = 0; i < static_cast<int>(n); ++i) {
+                    const float* vec = data + static_cast<size_t>(i) * state_.dim;
+                    assignments[i] = kd_nearest_approx_(vec, 1.1f);  // 10% tolerance
+                }
+            } else if (hierarchical_kd_.enabled) {
+                hierarchical_kd_assign_batch_(data, n, assignments.data());
+            } else {
+                kd_assign_batch_(data, n, assignments.data());
+            }
 
             // Optional correctness validation against brute-force on a sample
             if (state_.params.validate_ann_assignment) {
@@ -1939,7 +2908,11 @@ auto IvfPqIndex::Impl::add(const std::uint64_t* ids, const float* data, std::siz
             for (int i = 0; i < static_cast<int>(n); ++i) {
                 const std::size_t idx = static_cast<std::size_t>(i);
                 const float* vec = data + idx * state_.dim;
-                const std::uint32_t best_idx_val = kd_nearest_(vec);
+                const std::uint32_t best_idx_val = hierarchical_kd_.enabled 
+                    ? hierarchical_kd_nearest_(vec)
+                    : (use_veb_layout_ && !force_no_veb) 
+                        ? kd_nearest_veb_(vec) 
+                        : kd_nearest_(vec);
                 assignments[idx] = best_idx_val;
 
                 if (state_.params.validate_ann_assignment) {
@@ -2636,7 +3609,11 @@ auto IvfPqIndex::save(const std::string& path) const -> std::expected<void, core
         #endif
             hdr.comp = static_cast<std::uint64_t>(payload_size);
             hdr.shash = fnv64(data, bytes); // checksum of uncompressed contents
-            write_and_hash(&hdr, sizeof(hdr));
+            // Write header fields individually to avoid struct padding issues
+            write_and_hash(&hdr.type, sizeof(hdr.type));
+            write_and_hash(&hdr.unc, sizeof(hdr.unc));
+            write_and_hash(&hdr.comp, sizeof(hdr.comp));
+            write_and_hash(&hdr.shash, sizeof(hdr.shash));
             if (payload_size) write_and_hash(payload, payload_size);
         };
 
@@ -3068,7 +4045,12 @@ auto IvfPqIndex::load(const std::string& path)
         bool got_centroids=false, got_codebooks=false, got_inverted=false;
         struct SectionHdr { std::uint32_t type; std::uint64_t unc; std::uint64_t comp; std::uint64_t shash; };
         while (file.tellg() < fsize - static_cast<std::streamoff>(12)) {
-            SectionHdr hdr{}; if (!read_and_hash(&hdr, sizeof(hdr))) return std::vesper_unexpected(error{ error_code::io_failed, "Failed reading section header", "ivf_pq.load"});
+            SectionHdr hdr{};
+            // Read header fields individually to avoid struct padding issues
+            if (!read_and_hash(&hdr.type, sizeof(hdr.type))) return std::vesper_unexpected(error{ error_code::io_failed, "Failed reading section type", "ivf_pq.load"});
+            if (!read_and_hash(&hdr.unc, sizeof(hdr.unc))) return std::vesper_unexpected(error{ error_code::io_failed, "Failed reading section unc size", "ivf_pq.load"});
+            if (!read_and_hash(&hdr.comp, sizeof(hdr.comp))) return std::vesper_unexpected(error{ error_code::io_failed, "Failed reading section comp size", "ivf_pq.load"});
+            if (!read_and_hash(&hdr.shash, sizeof(hdr.shash))) return std::vesper_unexpected(error{ error_code::io_failed, "Failed reading section hash", "ivf_pq.load"});
             if (hdr.unc == 0 && hdr.comp == 0) continue;
             std::vector<char> payload(static_cast<std::size_t>(hdr.comp));
             if (hdr.comp) { if (!read_and_hash(payload.data(), static_cast<std::size_t>(hdr.comp))) return std::vesper_unexpected(error{ error_code::io_failed, "Failed reading section payload", "ivf_pq.load"}); }

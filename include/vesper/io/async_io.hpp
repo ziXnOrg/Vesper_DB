@@ -80,6 +80,33 @@ struct AsyncIOStats {
         bytes_written = 0;
         total_latency_us = 0;
     }
+    
+    // Copy constructor (needed because atomics are not copyable)
+    AsyncIOStats(const AsyncIOStats& other) 
+        : requests_submitted(other.requests_submitted.load())
+        , requests_completed(other.requests_completed.load())
+        , requests_failed(other.requests_failed.load())
+        , requests_cancelled(other.requests_cancelled.load())
+        , bytes_read(other.bytes_read.load())
+        , bytes_written(other.bytes_written.load())
+        , total_latency_us(other.total_latency_us.load()) {}
+    
+    // Default constructor
+    AsyncIOStats() = default;
+    
+    // Copy assignment
+    AsyncIOStats& operator=(const AsyncIOStats& other) {
+        if (this != &other) {
+            requests_submitted.store(other.requests_submitted.load());
+            requests_completed.store(other.requests_completed.load());
+            requests_failed.store(other.requests_failed.load());
+            requests_cancelled.store(other.requests_cancelled.load());
+            bytes_read.store(other.bytes_read.load());
+            bytes_written.store(other.bytes_written.load());
+            total_latency_us.store(other.total_latency_us.load());
+        }
+        return *this;
+    }
 };
 
 /**

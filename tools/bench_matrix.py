@@ -8,6 +8,8 @@ from typing import Optional, Tuple
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BUILD_DIR = os.path.join(ROOT, 'build')
+IS_WIN = os.name == 'nt'
+RELEASE_DIR = os.path.join(BUILD_DIR, 'Release') if IS_WIN else BUILD_DIR
 
 @dataclass
 class RunResult:
@@ -35,7 +37,10 @@ def configure_build(serialize: bool, accelerate: bool) -> bool:
 
 
 def build_targets() -> bool:
-    rc, _ = run_cmd('cmake --build build --target test_hnsw_batch hnsw_connectivity_test -j')
+    cmd = 'cmake --build build --target test_hnsw_batch hnsw_connectivity_test -j'
+    if IS_WIN:
+        cmd = 'cmake --build build --config Release --target test_hnsw_batch hnsw_connectivity_test -j'
+    rc, _ = run_cmd(cmd)
     return rc == 0
 
 
@@ -82,9 +87,20 @@ def parse_large(stdout: str) -> RunResult:
     return RunResult(ok, rate, cov)
 
 
-def run_exec(path: str, env: dict) -> tuple[bool, str]:
-    rc, out = run_cmd(shlex.quote(path), env=env)
-    return rc == 0, out
+def run_exec(prog: str, env: dict) -> tuple[bool, str]:
+    # prog is base program name without extension; run from Release dir on Windows
+    if IS_WIN:
+        exe_path = os.path.join(RELEASE_DIR, prog + '.exe')
+        cmd = [exe_path]
+        cwd = RELEASE_DIR
+    else:
+        exe_path = os.path.join(BUILD_DIR, prog)
+        cmd = [exe_path]
+        cwd = BUILD_DIR
+    print(f"$ {' '.join(cmd)}")
+    proc = subprocess.run(cmd, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    print(proc.stdout)
+    return proc.returncode == 0, proc.stdout
 
 
 def main():
@@ -96,6 +112,12 @@ def main():
 
     thread_vals = [2, 3, 4, 6]
     adaptive_vals = [False, True]
+
+    # When running under CTest, we keep it fast to avoid long CI hangs
+    if os.environ.get('VESPER_BENCH_FAST') == '1':
+        combos = [(False, False)]
+        thread_vals = [2]
+        adaptive_vals = [False]
 
     summary = []
 
@@ -118,10 +140,10 @@ def main():
                     env.pop('VESPER_ADAPTIVE_EF', None)
                 # Leave VESPER_EFC_UPPER unset for auto
 
-                ok1, out1 = run_exec(os.path.join(BUILD_DIR, 'test_hnsw_batch'), env)
+                ok1, out1 = run_exec('test_hnsw_batch', env)
                 res1 = parse_small(out1) if ok1 else RunResult(False, None, None, note='exec_failed')
 
-                ok2, out2 = run_exec(os.path.join(BUILD_DIR, 'hnsw_connectivity_test'), env)
+                ok2, out2 = run_exec('hnsw_connectivity_test', env)
                 res2 = parse_large(out2) if ok2 else RunResult(False, None, None, note='exec_failed')
 
                 summary.append({

@@ -210,6 +210,26 @@ public:
         const VamanaSearchParams& params = {}) const
         -> std::expected<std::vector<std::vector<std::pair<float, std::uint32_t>>>, core::error>;
 
+    /** \brief Get vector by ID.
+     * 
+     * Retrieves vector from disk or cache.
+     * 
+     * \param id Vector ID
+     * \return Vector data or error
+     */
+    [[nodiscard]] auto get_vector(std::uint64_t id) const
+        -> std::expected<std::vector<float>, core::error>;
+    
+    /** \brief Get neighbors of a node.
+     * 
+     * Returns the neighbor list for a given node ID.
+     * 
+     * \param id Node ID
+     * \return Neighbor IDs or error
+     */
+    [[nodiscard]] auto get_neighbors(std::uint32_t id) const
+        -> std::expected<std::vector<std::uint32_t>, core::error>;
+    
     /** \brief Save index to disk.
      * 
      * Writes graph structure, PQ codes, and metadata to disk.
@@ -254,6 +274,33 @@ public:
 
     /** \brief Clear cache (useful for benchmarking). */
     auto clear_cache() -> void;
+    
+    /** \brief Get entry point for search.
+     * \return Entry point ID or error
+     */
+    [[nodiscard]] auto get_entry_point() const 
+        -> std::expected<std::uint32_t, core::error>;
+    
+    /** \brief Set entry point for search.
+     * \param id New entry point ID
+     * \return Success or error
+     */
+    [[nodiscard]] auto set_entry_point(std::uint32_t id)
+        -> std::expected<void, core::error>;
+    
+    /** \brief Update neighbor list for a node.
+     * \param id Node ID
+     * \param neighbors New neighbor list
+     * \return Success or error
+     */
+    [[nodiscard]] auto update_neighbors(std::uint32_t id, 
+                                       const std::vector<std::uint32_t>& neighbors)
+        -> std::expected<void, core::error>;
+    
+    /** \brief Flush cached data to disk.
+     * \return Success or error
+     */
+    [[nodiscard]] auto flush() -> std::expected<void, core::error>;
 
 private:
     class Impl;

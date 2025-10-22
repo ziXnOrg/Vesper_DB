@@ -71,13 +71,18 @@ public:
     
     /** \brief Check if PQ is trained. */
     auto is_trained() const noexcept -> bool { return trained_; }
-    
+
     /** \brief Get number of subquantizers. */
     auto m() const noexcept -> std::uint32_t { return m_; }
-    
+
     /** \brief Get codebook size. */
     auto ksub() const noexcept -> std::uint32_t { return ksub_; }
-    
+
+    /** \brief Export codebooks as a dense row-major array [m*ksub x dsub]. */
+    auto export_codebooks(std::vector<float>& out) const -> void;
+    /** \brief Import pre-trained codebooks and mark as trained. */
+    auto import_pretrained(std::size_t dsub, std::span<const float> data) -> void;
+
 private:
     std::uint32_t m_;           /**< Number of subquantizers */
     std::uint32_t nbits_;       /**< Bits per subquantizer */

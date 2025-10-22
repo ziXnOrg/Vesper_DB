@@ -48,40 +48,54 @@ enum class SelectionStrategy {
 struct IndexBuildConfig {
     IndexType type{IndexType::HNSW};
     SelectionStrategy strategy{SelectionStrategy::Auto};
-    
+
     // HNSW parameters
     HnswBuildParams hnsw_params;
-    
+
     // IVF-PQ parameters
     IvfPqTrainParams ivf_params;
     PqTrainParams pq_params;
-    
+
     // DiskANN parameters
     VamanaBuildParams vamana_params;
-    
+
+    // Quantization options
+    bool enable_rabitq{false};           /**< Use RaBitQ quantization */
+    std::uint8_t quantization_bits{1};   /**< Bits for quantization (1, 4, or 8) */
+    bool enable_matryoshka{false};       /**< Use Matryoshka embeddings */
+    std::vector<std::uint32_t> matryoshka_dims; /**< Matryoshka dimension levels */
+
     // Resource limits
     std::size_t memory_budget_mb{1024};  /**< Memory budget in MB */
     std::size_t cache_size_mb{256};      /**< Cache size for disk indexes */
-    
+
     // Optimization hints
     bool optimize_for_recall{true};      /**< Prioritize recall over speed */
     float target_recall{0.95f};          /**< Target recall@k */
+    bool use_parallel_construction{true}; /**< Use parallel index building */
 };
 
 /** \brief Query configuration for index manager. */
 struct QueryConfig {
     std::uint32_t k{10};                 /**< Number of results */
     float epsilon{0.0f};                 /**< Range query epsilon */
-    
+
     // Index-specific parameters
-    std::uint32_t ef_search{64};         /**< HNSW search parameter */
+    std::uint32_t ef_search{100};        /**< HNSW search parameter (default raised for better recall) */
     std::uint32_t nprobe{8};             /**< IVF probing depth */
     std::uint32_t l_search{128};         /**< DiskANN search list size */
-    
+
+    // Rerank controls (IVF-PQ)
+    bool use_exact_rerank{false};        /**< Recompute exact distances on shortlist if raw vectors available */
+    std::uint32_t rerank_k{0};           /**< Shortlist size for rerank (0=auto -> cand heuristic) */
+    // Adaptive shortlist sizing (when rerank_k==0)
+    float rerank_alpha{2.0f};            /**< Heuristic multiplier for cand_k: alpha * k * log2(1+nprobe) */
+    std::uint32_t rerank_cand_ceiling{2000}; /**< Hard ceiling for cand_k (0 = no cap) */
+
     // Query planning hints
     bool use_query_planner{true};        /**< Enable cost-based planning */
     std::optional<IndexType> preferred_index; /**< Force specific index */
-    
+
     // Metadata filtering
     std::optional<filter_expr> filter;   /**< Optional metadata filter */
 };
@@ -103,18 +117,18 @@ struct IndexStats {
  * Example usage:
  * ```cpp
  * IndexManager manager(dimension);
- * 
+ *
  * // Configure and build indexes
  * IndexBuildConfig config;
  * config.strategy = SelectionStrategy::Hybrid;
  * config.memory_budget_mb = 2048;
- * 
+ *
  * auto result = manager.build(vectors, n, config);
- * 
+ *
  * // Query with automatic index selection
  * QueryConfig query_config;
  * query_config.k = 100;
- * 
+ *
  * auto results = manager.search(query, query_config);
  * ```
  */
@@ -122,13 +136,13 @@ class IndexManager {
 public:
     /** \brief Construct manager for given dimension. */
     explicit IndexManager(std::size_t dimension);
-    
+
     ~IndexManager();
     IndexManager(IndexManager&&) noexcept;
     IndexManager& operator=(IndexManager&&) noexcept;
     IndexManager(const IndexManager&) = delete;
     IndexManager& operator=(const IndexManager&) = delete;
-    
+
     /** \brief Build indexes from data.
      *
      * \param vectors Training/indexing vectors [n x dim]
@@ -140,7 +154,7 @@ public:
      */
     auto build(const float* vectors, std::size_t n, const IndexBuildConfig& config)
         -> std::expected<void, core::error>;
-    
+
     /** \brief Add vectors incrementally.
      *
      * \param id Vector ID
@@ -151,7 +165,7 @@ public:
      */
     auto add(std::uint64_t id, const float* vector)
         -> std::expected<void, core::error>;
-    
+
     /** \brief Batch add vectors.
      *
      * \param ids Vector IDs [n]
@@ -161,7 +175,7 @@ public:
      */
     auto add_batch(const std::uint64_t* ids, const float* vectors, std::size_t n)
         -> std::expected<void, core::error>;
-    
+
     /** \brief Search for nearest neighbors.
      *
      * \param query Query vector [dim]
@@ -172,7 +186,7 @@ public:
      */
     auto search(const float* query, const QueryConfig& config)
         -> std::expected<std::vector<std::pair<std::uint64_t, float>>, core::error>;
-    
+
     /** \brief Batch search for multiple queries.
      *
      * \param queries Query vectors [nq x dim]
@@ -182,7 +196,7 @@ public:
      */
     auto search_batch(const float* queries, std::size_t nq, const QueryConfig& config)
         -> std::expected<std::vector<std::vector<std::pair<std::uint64_t, float>>>, core::error>;
-    
+
     /** \brief Update/replace an existing vector.
      *
      * \param id Vector ID to update
@@ -193,7 +207,7 @@ public:
      */
     auto update(std::uint64_t id, const float* vector)
         -> std::expected<void, core::error>;
-    
+
     /** \brief Batch update vectors.
      *
      * \param ids Vector IDs to update [n]
@@ -203,20 +217,20 @@ public:
      */
     auto update_batch(const std::uint64_t* ids, const float* vectors, std::size_t n)
         -> std::expected<void, core::error>;
-    
+
     /** \brief Remove vector by ID.
      *
      * \param id Vector ID to remove
      * \return Success or error
      */
     auto remove(std::uint64_t id) -> std::expected<void, core::error>;
-    
+
     /** \brief Get statistics for all indexes. */
     auto get_stats() const -> std::vector<IndexStats>;
-    
+
     /** \brief Get active index types. */
     auto get_active_indexes() const -> std::vector<IndexType>;
-    
+
     /** \brief Optimize indexes for query performance.
      *
      * Rebuilds or reorganizes indexes based on access patterns.
@@ -225,27 +239,27 @@ public:
      * \return Success or error
      */
     auto optimize(bool force = false) -> std::expected<void, core::error>;
-    
+
     /** \brief Save indexes to disk.
      *
      * \param path Directory path for index files
      * \return Success or error
      */
     auto save(const std::string& path) const -> std::expected<void, core::error>;
-    
+
     /** \brief Load indexes from disk.
      *
      * \param path Directory path with index files
      * \return Success or error
      */
     auto load(const std::string& path) -> std::expected<void, core::error>;
-    
+
     /** \brief Get memory usage in bytes. */
     auto memory_usage() const -> std::size_t;
-    
+
     /** \brief Get disk usage in bytes. */
     auto disk_usage() const -> std::size_t;
-    
+
     /** \brief Set memory budget for indexes.
      *
      * May trigger index eviction or conversion.
@@ -254,17 +268,19 @@ public:
      * \return Success or error
      */
     auto set_memory_budget(std::size_t budget_mb) -> std::expected<void, core::error>;
-    
+    /** \brief Get current memory budget in MB. */
+    auto get_memory_budget() const -> std::size_t;
+
     /** \brief Add or update metadata for a vector.
      *
      * \param id Vector ID
      * \param metadata Key-value metadata pairs
      * \return Success or error
      */
-    auto set_metadata(std::uint64_t id, 
+    auto set_metadata(std::uint64_t id,
                      const std::unordered_map<std::string, metadata::MetadataValue>& metadata)
         -> std::expected<void, core::error>;
-    
+
     /** \brief Get metadata for a vector.
      *
      * \param id Vector ID
@@ -272,14 +288,14 @@ public:
      */
     auto get_metadata(std::uint64_t id) const
         -> std::expected<std::unordered_map<std::string, metadata::MetadataValue>, core::error>;
-    
+
     /** \brief Remove metadata for a vector.
      *
      * \param id Vector ID
      * \return Success or error
      */
     auto remove_metadata(std::uint64_t id) -> std::expected<void, core::error>;
-    
+
 private:
     class Impl;
     std::unique_ptr<Impl> impl_;
@@ -303,12 +319,12 @@ public:
         float estimated_recall;
         std::string explanation;
     };
-    
+
     /** \brief Create planner for index manager. */
     explicit QueryPlanner(const IndexManager& manager);
-    
+
     ~QueryPlanner();
-    
+
     /** \brief Plan query execution.
      *
      * \param query Query vector [dim]
@@ -316,16 +332,16 @@ public:
      * \return Optimized query plan
      */
     auto plan(const float* query, const QueryConfig& config) -> QueryPlan;
-    
+
     /** \brief Update statistics from query execution.
      *
      * \param plan Executed plan
      * \param actual_time_ms Actual execution time
      * \param actual_recall Measured recall (if known)
      */
-    auto update_stats(const QueryPlan& plan, float actual_time_ms, 
+    auto update_stats(const QueryPlan& plan, float actual_time_ms,
                      std::optional<float> actual_recall = {}) -> void;
-    
+
     /** \brief Get planner statistics. */
     struct PlannerStats {
         std::uint64_t plans_generated{0};
@@ -333,9 +349,9 @@ public:
         float avg_estimation_error_ms{0.0f};
         float avg_recall_error{0.0f};
     };
-    
+
     auto get_stats() const -> PlannerStats;
-    
+
 private:
     class Impl;
     std::unique_ptr<Impl> impl_;

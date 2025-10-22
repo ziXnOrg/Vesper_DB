@@ -18,6 +18,14 @@ struct KernelOps {
   float (*inner_product)(std::span<const float>, std::span<const float>) noexcept;
   float (*cosine_similarity)(std::span<const float>, std::span<const float>) noexcept;
   float (*cosine_distance)(std::span<const float>, std::span<const float>) noexcept;
+  
+  // Batch operations for multiple vectors
+  void (*batch_l2_sq)(std::span<const float> query, 
+                      const float* vectors, size_t nvec, size_t dim,
+                      float* distances) noexcept;
+  void (*batch_inner_product)(std::span<const float> query,
+                              const float* vectors, size_t nvec, size_t dim,
+                              float* distances) noexcept;
 };
 
 // Returns a stable reference valid for the process lifetime. "scalar" is the default backend.

@@ -139,18 +139,18 @@ inline float cosine_similarity(std::span<const float> a, std::span<const float> 
   }
   
   float dot = dot0 + dot1 + dot2 + dot3;
-  float na2 = na0 + na1 + na2 + na3;
-  float nb2 = nb0 + nb1 + nb2 + nb3;
+  float na2_total = na0 + na1 + na2 + na3;
+  float nb2_total = nb0 + nb1 + nb2 + nb3;
   
   // Handle remaining elements
   for (; i < n; ++i) {
     float av = pa[i], bv = pb[i];
     dot += av * bv;
-    na2 += av * av;
-    nb2 += bv * bv;
+    na2_total += av * av;
+    nb2_total += bv * bv;
   }
   
-  float denom = std::sqrt(na2) * std::sqrt(nb2);
+  float denom = std::sqrt(na2_total) * std::sqrt(nb2_total);
   return dot / denom; // UB if denom==0 per preconditions
 }
 

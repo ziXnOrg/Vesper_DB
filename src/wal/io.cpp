@@ -7,6 +7,10 @@
 #include <regex>
 #include <iomanip>
 #include <sstream>
+#include <unordered_set>
+#include <unordered_map>
+
+
 
 #include <algorithm>
 
@@ -17,8 +21,45 @@ static inline bool type_enabled(std::uint32_t mask, std::uint16_t t){ return (ma
 namespace vesper::wal {
 
 WalWriter::~WalWriter(){ if (out_.is_open()) out_.close(); }
-WalWriter::WalWriter(WalWriter&& o) noexcept : path_(std::move(o.path_)), dir_(std::move(o.dir_)), prefix_(std::move(o.prefix_)), max_file_bytes_(o.max_file_bytes_), strict_lsn_monotonic_(o.strict_lsn_monotonic_), seq_index_(o.seq_index_), cur_bytes_(o.cur_bytes_), cur_frames_(o.cur_frames_), cur_start_lsn_(o.cur_start_lsn_), cur_end_lsn_(o.cur_end_lsn_), prev_lsn_(o.prev_lsn_), have_prev_(o.have_prev_), out_(std::move(o.out_)) {}
-WalWriter& WalWriter::operator=(WalWriter&& o) noexcept { if(this!=&o){ if(out_.is_open()) out_.close(); path_=std::move(o.path_); dir_=std::move(o.dir_); prefix_=std::move(o.prefix_); max_file_bytes_=o.max_file_bytes_; strict_lsn_monotonic_=o.strict_lsn_monotonic_; seq_index_=o.seq_index_; cur_bytes_=o.cur_bytes_; cur_frames_=o.cur_frames_; cur_start_lsn_=o.cur_start_lsn_; cur_end_lsn_=o.cur_end_lsn_; prev_lsn_=o.prev_lsn_; have_prev_=o.have_prev_; out_=std::move(o.out_);} return *this; }
+WalWriter::WalWriter(WalWriter&& o) noexcept
+  : path_(std::move(o.path_)),
+    dir_(std::move(o.dir_)),
+    prefix_(std::move(o.prefix_)),
+    max_file_bytes_(o.max_file_bytes_),
+    strict_lsn_monotonic_(o.strict_lsn_monotonic_),
+    fsync_on_rotation_(o.fsync_on_rotation_),
+    fsync_on_flush_(o.fsync_on_flush_),
+    seq_index_(o.seq_index_),
+    cur_bytes_(o.cur_bytes_),
+    cur_frames_(o.cur_frames_),
+    cur_start_lsn_(o.cur_start_lsn_),
+    cur_end_lsn_(o.cur_end_lsn_),
+    prev_lsn_(o.prev_lsn_),
+    have_prev_(o.have_prev_),
+    stats_(o.stats_),
+    out_(std::move(o.out_)) {}
+WalWriter& WalWriter::operator=(WalWriter&& o) noexcept {
+  if (this != &o) {
+    if (out_.is_open()) out_.close();
+    path_ = std::move(o.path_);
+    dir_ = std::move(o.dir_);
+    prefix_ = std::move(o.prefix_);
+    max_file_bytes_ = o.max_file_bytes_;
+    strict_lsn_monotonic_ = o.strict_lsn_monotonic_;
+    fsync_on_rotation_ = o.fsync_on_rotation_;
+    fsync_on_flush_ = o.fsync_on_flush_;
+    seq_index_ = o.seq_index_;
+    cur_bytes_ = o.cur_bytes_;
+    cur_frames_ = o.cur_frames_;
+    cur_start_lsn_ = o.cur_start_lsn_;
+    cur_end_lsn_ = o.cur_end_lsn_;
+    prev_lsn_ = o.prev_lsn_;
+    have_prev_ = o.have_prev_;
+    stats_ = o.stats_;
+    out_ = std::move(o.out_);
+  }
+  return *this;
+}
 
 auto WalWriter::open(std::string_view p, bool create_if_missing)
     -> std::expected<WalWriter, vesper::core::error> {
@@ -262,23 +303,34 @@ auto recover_scan_dir(const std::filesystem::path& dir, std::function<void(const
     if (auto sx = load_snapshot(dir); sx) cutoff_lsn = sx->last_lsn;
   }
   std::vector<std::filesystem::path> files;
-  if (have_manifest) {
-    for (auto& e : m.entries) files.push_back(dir / e.file);
-    // Also consider the current (possibly not yet in manifest) highest seq file
-    std::filesystem::path maxp; std::uint64_t maxseq=0;
-    std::regex rx2("^wal-([0-9]{8})\\.log$");
+  const bool have_manifest_entries = have_manifest && !m.entries.empty();
+  if (have_manifest_entries) {
+    // Build union of manifest-listed files and on-disk wal-*.log files; dedupe and sort by seq
+    std::regex rx("^wal-([0-9]{8})\\.log$");
+    std::unordered_map<std::uint64_t, std::filesystem::path> by_seq;
+    // From directory
     for (auto& de : std::filesystem::directory_iterator(dir)) {
       if (!de.is_regular_file()) continue;
       auto name = de.path().filename().string();
-      std::smatch mm; if (std::regex_match(name, mm, rx2)) {
+      std::smatch mm; if (std::regex_match(name, mm, rx)) {
         auto seq = static_cast<std::uint64_t>(std::stoull(mm[1].str()));
-        if (seq > maxseq) { maxseq = seq; maxp = de.path(); }
+        by_seq.emplace(seq, de.path());
       }
     }
-    if (!maxp.empty()) {
-      if (files.empty() || files.back().filename() != maxp.filename()) files.push_back(maxp);
+    // From manifest entries
+    for (const auto& e : m.entries) {
+      std::smatch mm; if (std::regex_match(e.file, mm, rx)) {
+        auto seq = static_cast<std::uint64_t>(std::stoull(mm[1].str()));
+        by_seq.emplace(seq, dir / e.file);
+      }
     }
+    std::vector<std::pair<std::uint64_t, std::filesystem::path>> tmp;
+    tmp.reserve(by_seq.size());
+    for (auto& kv : by_seq) tmp.emplace_back(kv.first, kv.second);
+    std::sort(tmp.begin(), tmp.end(), [](auto& a, auto& b){ return a.first < b.first; });
+    for (auto& kv : tmp) files.push_back(kv.second);
   } else {
+    // No manifest or header-only: fall back to directory listing in seq order
     std::regex rx("^wal-([0-9]{8})\\.log$");
     std::vector<std::pair<std::uint64_t, std::filesystem::path>> tmp;
     for (auto& de : std::filesystem::directory_iterator(dir)) {
@@ -291,10 +343,12 @@ auto recover_scan_dir(const std::filesystem::path& dir, std::function<void(const
     std::sort(tmp.begin(), tmp.end(), [](auto& a, auto& b){ return a.first < b.first; });
     for (auto& kv : tmp) files.push_back(kv.second);
   }
+  // Track LSN monotonicity across files
+  std::uint64_t prev_lsn_global = 0; bool have_prev_global = false;
   for (size_t i = 0; i < files.size(); ++i) {
     // Determine if this file is entirely <= cutoff (manifest only)
     bool skip_deliver = false;
-    if (have_manifest) {
+    if (have_manifest_entries) {
       const auto fname = files[i].filename().string();
       auto it = std::find_if(m.entries.begin(), m.entries.end(), [&](const ManifestEntry& me){ return me.file == fname; });
       if (it != m.entries.end() && it->end_lsn <= cutoff_lsn) skip_deliver = true;
@@ -313,7 +367,6 @@ auto recover_scan_dir(const std::filesystem::path& dir, std::function<void(const
 
     // Second pass: deliver frames > cutoff unless manifest says skip
     RecoveryStats filtered{};
-    std::uint64_t prev_lsn = 0; bool have_prev = false;
     auto per_frame = [&](const WalFrame& f){
 #ifndef VESPER_WAL_DISABLE_MANIFEST_UPSERT_ON_FLUSH
       if (!skip_deliver) {
@@ -329,8 +382,8 @@ auto recover_scan_dir(const std::filesystem::path& dir, std::function<void(const
           if (filtered.min_len==0 || f.len<filtered.min_len) filtered.min_len=f.len;
           if (f.len>filtered.max_len) filtered.max_len=f.len;
           if (f.type==1 || f.type==2) {
-            if (have_prev && f.lsn <= prev_lsn) { filtered.lsn_monotonic=false; filtered.lsn_violations++; }
-            prev_lsn = f.lsn; have_prev = true;
+            if (have_prev_global && f.lsn <= prev_lsn_global) { filtered.lsn_monotonic=false; filtered.lsn_violations++; }
+            prev_lsn_global = f.lsn; have_prev_global = true;
           }
         }
       }
@@ -343,8 +396,6 @@ auto recover_scan_dir(const std::filesystem::path& dir, std::function<void(const
     agg.bytes += filtered.bytes;
     if (filtered.last_lsn != 0) agg.last_lsn = filtered.last_lsn;
     agg.min_len = (agg.min_len == 0) ? filtered.min_len : std::min(agg.min_len, filtered.min_len);
-
-
     agg.max_len = std::max(agg.max_len, filtered.max_len);
     for (size_t t = 0; t < agg.type_counts.size(); ++t) agg.type_counts[t] += filtered.type_counts[t];
     if (!filtered.lsn_monotonic) { agg.lsn_monotonic = false; }
@@ -366,7 +417,7 @@ auto recover_scan_dir(const std::filesystem::path& dir, const DeliveryLimits& li
     if (cutoff > 0 && f.lsn <= cutoff) return;
     if (!type_enabled(mask, f.type)) return;
     if (maxf > 0 && delivered_f >= maxf) return;
-    if (maxb > 0 && (delivered_b + f.len) > maxb) return;
+    if (maxb > 0 && (delivered_b + f.payload.size()) > maxb) return;
     delivered_f++; delivered_b += f.len; on_frame(f);
   });
 }

@@ -64,7 +64,7 @@ TEST_CASE("recover_scan_dir propagates integrity and I/O errors deterministicall
     // Delivered might include frames from the first intact file or none, but must not process beyond the error point deterministically.
   }
 
-  SECTION("missing wal file yields io error"){
+  SECTION("missing wal file yields not_found error"){
     auto files = wal_files_sorted(dir);
     REQUIRE(files.size() >= 2);
     auto missing = files.front().second;
@@ -74,7 +74,7 @@ TEST_CASE("recover_scan_dir propagates integrity and I/O errors deterministicall
 
     auto st = wal::recover_scan_dir(dir, [&](const wal::WalFrame&){ /*noop*/ });
     REQUIRE_FALSE(st.has_value());
-    REQUIRE(st.error().code == error_code::io_failed);
+    REQUIRE(st.error().code == error_code::not_found);
 
     // Restore to not affect other sections
     fs::rename(backup, missing, ec);

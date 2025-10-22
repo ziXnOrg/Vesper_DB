@@ -19,14 +19,19 @@ enum class error_code : std::uint32_t {
   ok = 0,
   io_failed = 1001,
   io_eof = 1002,
+  io_error = 1003,
   config_invalid = 2001,
   data_integrity = 3001,
   precondition_failed = 4001,
   resource_exhausted = 5001,
+  out_of_memory = 5002,
   not_found = 6001,
   unavailable = 7001,
   cancelled = 8001,
   internal = 9001,
+  invalid_argument = 9002,
+  not_initialized = 9003,
+  out_of_range = 9004,
 };
 
 /** \brief Structured error payload accompanying an error_code. */

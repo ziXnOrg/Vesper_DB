@@ -48,7 +48,7 @@ auto IoUring::create(const IoUringConfig& config)
     auto ring = std::unique_ptr<IoUring>(new IoUring(config));
     
     if (auto result = ring->init(); !result) {
-        return std::unexpected(result.error());
+        return std::vesper_unexpected(result.error());
     }
     
     return ring;
@@ -64,7 +64,7 @@ auto IoUring::init() -> std::expected<void, core::error> {
         int major = 0, minor = 0;
         if (sscanf(uts.release, "%d.%d", &major, &minor) == 2) {
             if (major < 5 || (major == 5 && minor < 1)) {
-                return std::unexpected(error{
+                return std::vesper_unexpected(error{
                     error_code::unsupported,
                     "io_uring requires Linux kernel 5.1+",
                     "io_uring"
@@ -89,7 +89,7 @@ auto IoUring::init() -> std::expected<void, core::error> {
     // Initialize io_uring
     int ret = io_uring_queue_init_params(config_.queue_depth, &ring_, &params);
     if (ret < 0) {
-        return std::unexpected(error{
+        return std::vesper_unexpected(error{
             error_code::io_error,
             "Failed to initialize io_uring: " + std::string(std::strerror(-ret)),
             "io_uring"
@@ -139,7 +139,7 @@ auto IoUring::submit_read(int fd, std::span<std::uint8_t> buffer,
     using core::error_code;
     
     if (!initialized_) {
-        return std::unexpected(error{
+        return std::vesper_unexpected(error{
             error_code::precondition_failed,
             "IoUring not initialized",
             "io_uring"
@@ -148,7 +148,7 @@ auto IoUring::submit_read(int fd, std::span<std::uint8_t> buffer,
     
     auto* sqe = get_sqe();
     if (!sqe) {
-        return std::unexpected(error{
+        return std::vesper_unexpected(error{
             error_code::resource_exhausted,
             "No submission queue entries available",
             "io_uring"
@@ -173,7 +173,7 @@ auto IoUring::submit_write(int fd, std::span<const std::uint8_t> buffer,
     using core::error_code;
     
     if (!initialized_) {
-        return std::unexpected(error{
+        return std::vesper_unexpected(error{
             error_code::precondition_failed,
             "IoUring not initialized",
             "io_uring"
@@ -182,7 +182,7 @@ auto IoUring::submit_write(int fd, std::span<const std::uint8_t> buffer,
     
     auto* sqe = get_sqe();
     if (!sqe) {
-        return std::unexpected(error{
+        return std::vesper_unexpected(error{
             error_code::resource_exhausted,
             "No submission queue entries available",
             "io_uring"
@@ -210,7 +210,7 @@ auto IoUring::submit_readv(int fd, std::span<const iovec> iovecs,
     using core::error_code;
     
     if (!initialized_) {
-        return std::unexpected(error{
+        return std::vesper_unexpected(error{
             error_code::precondition_failed,
             "IoUring not initialized",
             "io_uring"
@@ -219,7 +219,7 @@ auto IoUring::submit_readv(int fd, std::span<const iovec> iovecs,
     
     auto* sqe = get_sqe();
     if (!sqe) {
-        return std::unexpected(error{
+        return std::vesper_unexpected(error{
             error_code::resource_exhausted,
             "No submission queue entries available",
             "io_uring"
@@ -244,7 +244,7 @@ auto IoUring::submit_writev(int fd, std::span<const iovec> iovecs,
     using core::error_code;
     
     if (!initialized_) {
-        return std::unexpected(error{
+        return std::vesper_unexpected(error{
             error_code::precondition_failed,
             "IoUring not initialized",
             "io_uring"
@@ -253,7 +253,7 @@ auto IoUring::submit_writev(int fd, std::span<const iovec> iovecs,
     
     auto* sqe = get_sqe();
     if (!sqe) {
-        return std::unexpected(error{
+        return std::vesper_unexpected(error{
             error_code::resource_exhausted,
             "No submission queue entries available",
             "io_uring"
@@ -277,7 +277,7 @@ auto IoUring::submit_fsync(int fd, bool datasync,
     using core::error_code;
     
     if (!initialized_) {
-        return std::unexpected(error{
+        return std::vesper_unexpected(error{
             error_code::precondition_failed,
             "IoUring not initialized",
             "io_uring"
@@ -286,7 +286,7 @@ auto IoUring::submit_fsync(int fd, bool datasync,
     
     auto* sqe = get_sqe();
     if (!sqe) {
-        return std::unexpected(error{
+        return std::vesper_unexpected(error{
             error_code::resource_exhausted,
             "No submission queue entries available",
             "io_uring"
@@ -310,7 +310,7 @@ auto IoUring::register_files(std::span<const int> fds)
     using core::error_code;
     
     if (!initialized_) {
-        return std::unexpected(error{
+        return std::vesper_unexpected(error{
             error_code::precondition_failed,
             "IoUring not initialized",
             "io_uring"
@@ -319,7 +319,7 @@ auto IoUring::register_files(std::span<const int> fds)
     
     int ret = io_uring_register_files(&ring_, fds.data(), fds.size());
     if (ret < 0) {
-        return std::unexpected(error{
+        return std::vesper_unexpected(error{
             error_code::io_error,
             "Failed to register files: " + std::string(std::strerror(-ret)),
             "io_uring"
@@ -334,7 +334,7 @@ auto IoUring::unregister_files() -> std::expected<void, core::error> {
     using core::error_code;
     
     if (!initialized_) {
-        return std::unexpected(error{
+        return std::vesper_unexpected(error{
             error_code::precondition_failed,
             "IoUring not initialized",
             "io_uring"
@@ -343,7 +343,7 @@ auto IoUring::unregister_files() -> std::expected<void, core::error> {
     
     int ret = io_uring_unregister_files(&ring_);
     if (ret < 0) {
-        return std::unexpected(error{
+        return std::vesper_unexpected(error{
             error_code::io_error,
             "Failed to unregister files: " + std::string(std::strerror(-ret)),
             "io_uring"
@@ -358,7 +358,7 @@ auto IoUring::submit() -> std::expected<std::uint32_t, core::error> {
     using core::error_code;
     
     if (!initialized_) {
-        return std::unexpected(error{
+        return std::vesper_unexpected(error{
             error_code::precondition_failed,
             "IoUring not initialized",
             "io_uring"
@@ -371,7 +371,7 @@ auto IoUring::submit() -> std::expected<std::uint32_t, core::error> {
     
     int ret = io_uring_submit(&ring_);
     if (ret < 0) {
-        return std::unexpected(error{
+        return std::vesper_unexpected(error{
             error_code::io_error,
             "Failed to submit operations: " + std::string(std::strerror(-ret)),
             "io_uring"
@@ -391,7 +391,7 @@ auto IoUring::wait_completions(std::uint32_t min_complete,
     using core::error_code;
     
     if (!initialized_) {
-        return std::unexpected(error{
+        return std::vesper_unexpected(error{
             error_code::precondition_failed,
             "IoUring not initialized",
             "io_uring"
@@ -412,7 +412,7 @@ auto IoUring::wait_completions(std::uint32_t min_complete,
     int ret = io_uring_wait_cqe_timeout(&ring_, &cqe, pts);
     
     if (ret < 0 && ret != -ETIME && ret != -EINTR) {
-        return std::unexpected(error{
+        return std::vesper_unexpected(error{
             error_code::io_error,
             "Failed to wait for completions: " + std::string(std::strerror(-ret)),
             "io_uring"
@@ -485,7 +485,7 @@ auto IoUringBatch::submit() -> std::expected<std::uint32_t, core::error> {
         }
         
         if (!result) {
-            return std::unexpected(result.error());
+            return std::vesper_unexpected(result.error());
         }
     }
     
@@ -504,7 +504,7 @@ auto IoUringManager::get_thread_local(const IoUringConfig& config)
     if (!thread_instance_) {
         auto ring = IoUring::create(config);
         if (!ring) {
-            return std::unexpected(ring.error());
+            return std::vesper_unexpected(ring.error());
         }
         thread_instance_ = std::move(ring.value());
     }

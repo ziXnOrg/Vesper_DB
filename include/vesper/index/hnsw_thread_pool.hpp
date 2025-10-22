@@ -103,7 +103,17 @@ public:
                 pending_.fetch_add(1, std::memory_order_relaxed);
             }
 #else
-            tasks_.emplace_back([task] { (*task)(); });
+            // Track pending tasks to allow wait_all() to wait for completion, not just queue drain
+            pending_.fetch_add(1, std::memory_order_relaxed);
+            tasks_.emplace_back([this, task] {
+                (*task)();
+                // Decrement pending after execution and notify waiters if this was the last task
+                auto rem = pending_.fetch_sub(1, std::memory_order_relaxed) - 1;
+                if (rem == 0) {
+                    std::unique_lock<std::mutex> lk(queue_mutex_);
+                    cv_.notify_all();
+                }
+            });
 #endif
         }
 
@@ -183,7 +193,7 @@ public:
             return pending_.load(std::memory_order_relaxed) == 0;
         });
 #else
-        cv_.wait(lock, [this] { return tasks_.empty(); });
+        cv_.wait(lock, [this] { return pending_.load(std::memory_order_relaxed) == 0; });
 #endif
     }
 
@@ -250,6 +260,10 @@ private:
                 if (!tasks_.empty()) {
                     task = std::move(tasks_.front());
                     tasks_.pop_front();
+                    // If queue drained, wake any waiters in wait_all()
+                    if (tasks_.empty()) {
+                        cv_.notify_all();
+                    }
                 }
 #endif
             }
@@ -268,6 +282,7 @@ private:
     std::atomic<std::size_t> pending_{0};
 #else
     std::deque<std::function<void()>> tasks_;
+    std::atomic<std::size_t> pending_{0};
 #endif
     std::mutex queue_mutex_;            // only for CV and centralized queue path
     std::condition_variable cv_;
