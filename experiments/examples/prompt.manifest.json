@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vesper.dev/examples/prompt.manifest.v1.json",
+  "id": "vesper-system-prompt",
+  "version": "1.0.0",
+  "kind": "system",
+  "model": { "family": "openai" },
+  "decoding": { "temperature": 0.0, "top_p": 1.0, "n": 1, "seed": 23 },
+  "spec_refs": ["docs/blueprint.md", "docs/prompt-dev-roadmap.md#phase-0"],
+  "constraints": [
+    "C++20; -Wall -Wextra -Werror",
+    "Deterministic decoding",
+    "No network IO by default"
+  ],
+  "deliverables": [
+    "experiments/schema/prompt.manifest.schema.json"
+  ],
+  "checksum": { "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+  "created_at": "2025-08-28T12:00:00Z",
+  "updated_at": "2025-08-28T12:00:00Z",
+  "provenance": { "model_hash": "model-openai-gpt5-abcdef123456" }
+}
+

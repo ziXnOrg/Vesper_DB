@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+  <testsuite name="bm25_tests.exe" errors="0" failures="0" skipped="0" tests="79" hostname="tbd" time="0.043" timestamp="2025-10-20T06:37:04Z">
+    <properties>
+      <property name="random-seed" value="93236532"/>
+    </properties>
+    <testcase classname="bm25_tests.exe.global" name="BM25Index construction and configuration/Default construction" time="0.000" status="run"/>
+    <testcase classname="bm25_tests.exe.global" name="BM25Index construction and configuration/Custom parameters" time="0.000" status="run"/>
+    <testcase classname="bm25_tests.exe.global" name="BM25Index construction and configuration/Parameter validation" time="0.000" status="run"/>
+    <testcase classname="bm25_tests.exe.global" name="BM25Index document indexing/Single document indexing" time="0.000" status="run"/>
+    <testcase classname="bm25_tests.exe.global" name="BM25Index document indexing/Multiple document indexing" time="0.000" status="run"/>
+    <testcase classname="bm25_tests.exe.global" name="BM25Index document indexing/Duplicate document ID handling" time="0.000" status="run"/>
+    <testcase classname="bm25_tests.exe.global" name="BM25Index document indexing/Empty document handling" time="0.000" status="run"/>
+    <testcase classname="bm25_tests.exe.global" name="BM25Index search operations/Single term search" time="0.000" status="run"/>
+    <testcase classname="bm25_tests.exe.global" name="BM25Index search operations/Multi-term search" time="0.000" status="run"/>
+    <testcase classname="bm25_tests.exe.global" name="BM25Index search operations/Non-existent term search" time="0.000" status="run"/>
+    <testcase classname="bm25_tests.exe.global" name="BM25Index search operations/Empty query handling" time="0.000" status="run"/>
+    <testcase classname="bm25_tests.exe.global" name="BM25Index search operations/Top-k limiting" time="0.000" status="run"/>
+    <testcase classname="bm25_tests.exe.global" name="BM25Index search operations/Score ordering" time="0.000" status="run"/>
+    <testcase classname="bm25_tests.exe.global" name="BM25Index batch operations/Multiple document insertion" time="0.000" status="run"/>
+    <testcase classname="bm25_tests.exe.global" name="BM25Index batch operations/Multiple searches" time="0.000" status="run"/>
+    <testcase classname="bm25_tests.exe.global" name="BM25Index with filters/Search with include filter" time="0.000" status="run"/>
+    <testcase classname="bm25_tests.exe.global" name="BM25Index with filters/Search with exclude filter" time="0.000" status="run"/>
+    <testcase classname="bm25_tests.exe.global" name="BM25Index serialization/Save and load index" time="0.013" status="run"/>
+    <testcase classname="bm25_tests.exe.global" name="BM25Index serialization edge cases/Empty index roundtrip" time="0.013" status="run"/>
+    <testcase classname="bm25_tests.exe.global" name="BM25Index serialization edge cases/Corruption detected by checksum" time="0.014" status="run"/>
+    <testcase classname="bm25_tests.exe.global" name="BM25 scoring edge cases/Single document corpus" time="0.000" status="run"/>
+    <testcase classname="bm25_tests.exe.global" name="BM25 scoring edge cases/Document with repeated terms" time="0.000" status="run"/>
+    <testcase classname="bm25_tests.exe.global" name="BM25 scoring edge cases/Very long document normalization" time="0.000" status="run"/>
+    <system-out/>
+    <system-err/>
+  </testsuite>
+</testsuites>

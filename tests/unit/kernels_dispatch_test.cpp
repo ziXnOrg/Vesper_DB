@@ -1,0 +1,28 @@
+#include <catch2/catch_all.hpp>
+#include <vesper/kernels/dispatch.hpp>
+#include <vesper/kernels/backends/scalar.hpp>
+#include <vesper/kernels/distance.hpp>
+#include <random>
+
+using namespace vesper::kernels;
+
+using Catch::Approx;
+
+static void make_nonzero(std::vector<float>& v, std::mt19937& rng){
+  std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
+  do { for (auto& x : v) x = dist(rng); } while (std::all_of(v.begin(), v.end(), [](float x){return x==0.0f;}));
+}
+
+TEST_CASE("dispatcher scalar backend matches direct scalar kernels", "[kernels][dispatch]") {
+  const auto& ops = select_backend("scalar");
+  std::seed_seq seed{7,11,13}; std::mt19937 rng(seed);
+  for (int d : {1,3,16,128}) {
+    std::vector<float> a(d), b(d);
+    make_nonzero(a, rng); make_nonzero(b, rng);
+    REQUIRE(ops.l2_sq(a,b) == Approx(l2_sq(a,b)).margin(1e-6f));
+    REQUIRE(ops.inner_product(a,b) == Approx(inner_product(a,b)).margin(1e-6f));
+    REQUIRE(ops.cosine_similarity(a,b) == Approx(cosine_similarity(a,b)).margin(1e-6f));
+    REQUIRE(ops.cosine_distance(a,b) == Approx(cosine_distance(a,b)).margin(1e-6f));
+  }
+}
+

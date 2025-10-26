@@ -1,0 +1,13 @@
+# Vesper Experiment Example
+run_id: vesper-prompts-v1.0.0
+prompt_files:
+  - experiments/examples/prompt.manifest.json
+model: { name: gpt-5-pro, family: openai }
+decoding: { temperature: 0.0, top_p: 1.0, n: 1, seed: 23 }
+datasets: [helm:mmlu, promptbench:adv_suite_v1]
+seeds: [17, 23, 43]
+metrics: [accuracy, robustness@adv, latency_p50, cost]
+gates: { accuracy: 0.74, "robustness@adv": 0.62 }
+outputs: { dir: runs/vesper-prompts-v1.0.0 }
+notes: "Deterministic decoding; see docs/blueprint.md for SLO alignment."
+

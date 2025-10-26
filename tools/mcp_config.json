@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "capq-dev-assistant": {
+      "command": "python",
+      "args": ["tools/capq_mcp_server.py"],
+      "env": {
+        "PYTHONPATH": "."
+      }
+    }
+  }
+}

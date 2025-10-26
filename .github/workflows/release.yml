@@ -1,0 +1,222 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., v1.0.0)'
+        required: true
+        type: string
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            ninja-build \
+            libnuma-dev \
+            liburing-dev \
+            libtbb-dev
+
+      - name: Configure
+        run: |
+          cmake -B build \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DVESPER_ENABLE_TESTS=OFF \
+            -DVESPER_ENABLE_BENCH=OFF \
+            -DCMAKE_INSTALL_PREFIX=/usr
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Package
+        run: |
+          cd build
+          cpack -G DEB
+          cpack -G TGZ
+          
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: vesper-linux-x64
+          path: |
+            build/*.deb
+            build/*.tar.gz
+
+  build-windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configure
+        run: |
+          cmake -B build `
+            -G "Visual Studio 17 2022" `
+            -A x64 `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DVESPER_ENABLE_TESTS=OFF `
+            -DVESPER_ENABLE_BENCH=OFF
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Package
+        run: |
+          cd build
+          cpack -G ZIP -C Release
+          cpack -G NSIS -C Release
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: vesper-windows-x64
+          path: |
+            build/*.zip
+            build/*.exe
+
+  build-macos:
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          brew install cmake ninja tbb
+
+      - name: Configure
+        run: |
+          cmake -B build \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DVESPER_ENABLE_TESTS=OFF \
+            -DVESPER_ENABLE_BENCH=OFF \
+            -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64"
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Package
+        run: |
+          cd build
+          cpack -G TGZ
+          cpack -G DragNDrop
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: vesper-macos-universal
+          path: |
+            build/*.tar.gz
+            build/*.dmg
+
+  create-release:
+    needs: [build-linux, build-windows, build-macos]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: artifacts/
+
+      - name: Generate release notes
+        id: release_notes
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          echo "## Release $VERSION" > release_notes.md
+          echo "" >> release_notes.md
+          
+          # Extract relevant section from CHANGELOG
+          awk "/## \[${VERSION#v}\]/,/## \[/" CHANGELOG.md | head -n -2 >> release_notes.md
+          
+          echo "" >> release_notes.md
+          echo "### Downloads" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "#### Linux" >> release_notes.md
+          echo "- DEB package for Ubuntu/Debian" >> release_notes.md
+          echo "- TAR.GZ archive" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "#### Windows" >> release_notes.md
+          echo "- ZIP archive" >> release_notes.md
+          echo "- NSIS installer" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "#### macOS" >> release_notes.md
+          echo "- Universal binary (x86_64 + arm64)" >> release_notes.md
+          echo "- DMG installer" >> release_notes.md
+
+      - name: Create checksums
+        run: |
+          cd artifacts
+          find . -type f \( -name "*.deb" -o -name "*.tar.gz" -o -name "*.zip" -o -name "*.exe" -o -name "*.dmg" \) -exec sha256sum {} \; > ../checksums.txt
+          cd ..
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          body_path: release_notes.md
+          files: |
+            artifacts/**/*
+            checksums.txt
+          draft: false
+          prerelease: ${{ contains(github.ref, '-rc') || contains(github.ref, '-beta') || contains(github.ref, '-alpha') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-docker:
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+      
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v4
+        with:
+          images: vesperarch/vesper
+          tags: |
+            type=ref,event=tag
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha
+      
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

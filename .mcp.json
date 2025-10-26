@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "capq-dev-assistant": {
+      "command": "python",
+      "args": ["C:\\Users\\cisco\\Desktop\\dev\\research\\Vesper\\tools\\capq_mcp_server_v2.py"],
+      "env": {
+        "PYTHONPATH": "C:\\Users\\cisco\\Desktop\\dev\\research\\Vesper"
+      }
+    }
+  }
+}

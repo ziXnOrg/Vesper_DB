@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vesper.dev/schema/prompt.manifest.v1.json",
+  "title": "Vesper Prompt Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "version",
+    "kind",
+    "model",
+    "decoding",
+    "spec_refs",
+    "constraints",
+    "deliverables",
+    "checksum",
+    "created_at"
+  ],
+  "properties": {
+    "id": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" },
+    "version": {
+      "type": "string",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-[0-9A-Za-z-.]+)?(?:\\+[0-9A-Za-z-.]+)?$"
+    },
+    "kind": { "type": "string", "enum": ["system", "task", "tool", "meta"] },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["family"],
+      "properties": {
+        "family": { "type": "string", "enum": ["openai", "anthropic", "gemini", "llama", "other"] }
+      }
+    },
+    "decoding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["temperature", "top_p", "n", "seed"],
+      "properties": {
+        "temperature": { "const": 0.0 },
+        "top_p": { "const": 1.0 },
+        "n": { "const": 1 },
+        "seed": { "type": "integer" }
+      }
+    },
+    "spec_refs": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string" },
+      "$comment": "At least one entry must include 'docs/blueprint.md' (checked in CI/tooling)."
+    },
+    "constraints": { "type": "array", "items": { "type": "string" } },
+    "deliverables": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "pattern": "^(https?://|file://|(?!(/|[A-Za-z]:\\\\))[A-Za-z0-9._/\\-]+$)" }
+    },
+    "checksum": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sha256"],
+      "properties": {
+        "sha256": { "type": "string", "pattern": "^[A-Fa-f0-9]{64}$" }
+      }
+    },
+    "created_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": "string", "format": "date-time" },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "model_hash": { "type": "string" }
+      }
+    }
+  }
+}
+

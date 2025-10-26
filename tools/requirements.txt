@@ -1,0 +1,4 @@
+# CAPQ MCP Server Requirements
+numpy>=1.24.0
+scipy>=1.10.0
+mcp>=0.1.0  # Model Context Protocol
