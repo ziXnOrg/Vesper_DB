@@ -1,5 +1,5 @@
 /** \file index_manager.cpp
- *  \brief Implementation of unified index management for multiple index types.
+ *  \brief unified index management for multiple index types.
  */
 
 #include "vesper/index/index_manager.hpp"
@@ -28,6 +28,10 @@
 #include <filesystem>
 #include <fstream>
 #include <cstdio>
+
+
+#include <iostream>
+#include <new>
 
 
 #include <cstring>
@@ -160,6 +164,11 @@ public:
     ~Impl() = default;
 
     // Accessors
+#ifdef VESPER_ENABLE_TESTS
+    // Debug accessor to expose IVF-PQ index to tests
+    auto get_ivf_pq_index_debug() const -> const IvfPqIndex* { return ivf_pq_index_.get(); }
+#endif
+
     auto get_memory_budget() const -> std::size_t { return memory_budget_mb_; }
 
     auto build(const float* vectors, std::size_t n, const IndexBuildConfig& config)
@@ -191,7 +200,7 @@ public:
             indexes_to_build.push_back(select_optimal_index(n, config));
         } else { // Hybrid
             // Build multiple indexes for query-time selection
-            if (n < 1000000) {
+            if (n <= 1000000) {
                 indexes_to_build.push_back(IndexType::HNSW);
             }
             if (n >= 10000 && n <= 10000000) {
@@ -201,6 +210,14 @@ public:
                 indexes_to_build.push_back(IndexType::DiskANN);
             }
         }
+
+        // If exact rerank is requested via env, ensure a raw-vector store is present (HNSW)
+        if (auto v = vesper::core::safe_getenv("VESPER_USE_EXACT_RERANK"); v && !v->empty() && ((*v)[0] == '1')) {
+            if (std::find(indexes_to_build.begin(), indexes_to_build.end(), IndexType::HNSW) == indexes_to_build.end()) {
+                indexes_to_build.push_back(IndexType::HNSW);
+            }
+        }
+
 
         // Build selected indexes
         for (auto index_type : indexes_to_build) {
@@ -1663,6 +1680,13 @@ private:
                 // Persist the effective params in build_config_ for save/load
                 build_config_.ivf_params = params;
 
+
+                if (auto dbg = vesper::core::safe_getenv("VESPER_IVFPQ_DEBUG"); dbg && !dbg->empty() && ((*dbg)[0] != '0')) {
+                    std::cerr << "[IVFPQ][IndexManager] Effective params: nlist=" << params.nlist
+                              << ", m=" << params.m << ", nbits=" << params.nbits
+                              << ", memory_budget_mb=" << config.memory_budget_mb << std::endl;
+                }
+
                 // Train on a subsample to keep k-means tractable on very large n.
                 // Heuristic: cap training set to at most 200k points, evenly spaced.
                 std::size_t train_n = std::min<std::size_t>(n, 200000);
@@ -1680,9 +1704,21 @@ private:
                     }
                     train_ptr = train_buf.data();
                 }
+
+                if (auto dbg = vesper::core::safe_getenv("VESPER_IVFPQ_DEBUG"); dbg && !dbg->empty() && ((*dbg)[0] != '0')) {
+                    std::cerr << "[IVFPQ][IndexManager] Training set size train_n=" << train_n
+                              << (train_n < n ? " (subsampled)" : " (full)") << std::endl;
+                }
+
                 // Slightly reduce iterations in Auto to speed up without hurting recall much
                 if (config.strategy != SelectionStrategy::Manual) {
                     params.max_iter = std::min<std::uint32_t>(params.max_iter, 20);
+                }
+
+
+                if (auto dbg = vesper::core::safe_getenv("VESPER_IVFPQ_DEBUG"); dbg && !dbg->empty() && ((*dbg)[0] != '0')) {
+                    std::cerr << "[IVFPQ][IndexManager] Starting train() with train_n=" << train_n << ", dim=" << dimension_
+                              << ", n=" << n << ", nlist=" << params.nlist << ", m=" << params.m << ", nbits=" << params.nbits << std::endl;
                 }
 
                 auto result = ivf_pq_index_->train(train_ptr, dimension_, train_n, params);
@@ -1690,11 +1726,27 @@ private:
                     return std::vesper_unexpected(result.error());
                 }
 
+                if (auto dbg = vesper::core::safe_getenv("VESPER_IVFPQ_DEBUG"); dbg && !dbg->empty() && ((*dbg)[0] != '0')) {
+                    std::cerr << "[IVFPQ][IndexManager] train() completed: train_n=" << train_n << ", nlist=" << params.nlist
+                              << ", m=" << params.m << ", nbits=" << params.nbits << std::endl;
+                }
+
+
                 // Add all vectors
+
+                if (auto dbg = vesper::core::safe_getenv("VESPER_IVFPQ_DEBUG"); dbg && !dbg->empty() && ((*dbg)[0] != '0')) {
+                    std::cerr << "[IVFPQ][IndexManager] Starting add() for n=" << n << std::endl;
+                }
+
                 std::vector<std::uint64_t> ids(n);
                 std::iota(ids.begin(), ids.end(), 0);
                 auto add_result = ivf_pq_index_->add(ids.data(), vectors, n);
                 if (!add_result) return add_result;
+
+                    if (auto dbg = vesper::core::safe_getenv("VESPER_IVFPQ_DEBUG"); dbg && !dbg->empty() && ((*dbg)[0] != '0')) {
+                        std::cerr << "[IVFPQ][IndexManager] add() completed for n=" << n << std::endl;
+                    }
+
                 break;
             }
 
@@ -1802,6 +1854,12 @@ auto IndexManager::add_batch(const std::uint64_t* ids, const float* vectors, std
     -> std::expected<void, core::error> {
     return impl_->add_batch(ids, vectors, n);
 }
+
+#ifdef VESPER_ENABLE_TESTS
+auto IndexManager::ivf_pq_index_debug() const -> const IvfPqIndex* {
+    return impl_->get_ivf_pq_index_debug();
+}
+#endif
 
 auto IndexManager::search(const float* query, const QueryConfig& config)
     -> std::expected<std::vector<std::pair<std::uint64_t, float>>, core::error> {

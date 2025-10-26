@@ -3,12 +3,12 @@
 /** \file index_manager.hpp
  *  \brief Unified index management for multiple index types.
  *
- * Central component that manages the three-index architecture:
+ * Serves as the central component that manages the three-index architecture:
  * - HNSW for hot in-memory segments
  * - IVF-PQ for compact retrieval
  * - DiskANN for billion-scale SSD-resident search
  *
- * Provides unified API for index selection, query planning, and lifecycle management.
+ * Serves as a unified API for index selection, query planning, and lifecycle management.
  */
 
 #include <memory>
@@ -296,6 +296,14 @@ public:
      */
     auto remove_metadata(std::uint64_t id) -> std::expected<void, core::error>;
 
+#ifdef VESPER_ENABLE_TESTS
+    // Debug-only accessor for tests: expose IVF-PQ index (read-only)
+    auto ivf_pq_index_debug() const -> const IvfPqIndex*;
+    // Returns the effective query config applied by the most recent search() call
+    auto last_applied_query_config_debug() const -> QueryConfig;
+
+#endif
+
 private:
     class Impl;
     std::unique_ptr<Impl> impl_;
@@ -308,6 +316,44 @@ private:
  * - Query characteristics
  * - Resource constraints
  * - Historical performance
+ *
+ * Determinism and tie-breaking:
+ * - Index selection order is stable and deterministic. When multiple indexes are active,
+ *   the planner uses the first active index returned by IndexManager in stable enum order:
+ *   HNSW > IVF_PQ > DiskANN. This guarantees reproducible plan() results given the same
+ *   IndexManager state and QueryConfig.
+ *
+ * Determinism “frozen mode” (H3):
+ * - Environment variable: VESPER_PLANNER_FROZEN
+ *   - Set to "1" to enable frozen mode; any other value (or unset) leaves it disabled.
+ *   - The flag is read once at planner construction (via vesper::core::safe_getenv) and
+ *     cached as a const member to avoid data races and per-call overhead.
+ * - Behavior when frozen:
+ *   - plan(): uses only deterministic, fixed logic; no adaptive model/history is read.
+ *   - update_stats(): increments counters but skips all adaptive aggregate updates.
+ *   - get_stats(): counters continue to reflect usage; adaptive aggregates remain unchanged.
+ * - Intended use: testing, debugging, and reproducible benchmarking where adaptive tuning
+ *   must be disabled while preserving deterministic plan generation.
+ *
+ * Thread-safety:
+ * - plan() is thread-safe for concurrent calls (read-only access under shared lock; counters via atomics).
+ * - update_stats() is thread-safe and may run concurrently with plan() (exclusive lock for writes when not frozen).
+ *   In frozen mode, update_stats() performs an early return after incrementing counters and does not acquire the
+ *   state mutex since it makes no shared-state modifications.
+ * - get_stats() is thread-safe (atomics for counters; shared lock for aggregates).
+ * - Synchronization strategy: shared_mutex protects cost model, performance history, and aggregate totals; simple
+ *   counters use std::atomic with acquire/release semantics.
+ *
+ * Example (enable frozen mode for reproducibility):
+ * \code{.cpp}
+ * // On Windows PowerShell:
+ * //   $env:VESPER_PLANNER_FROZEN = "1"
+ * // On POSIX shells:
+ * //   export VESPER_PLANNER_FROZEN=1
+ * vesper::index::QueryPlanner planner(manager);
+ * auto plan = planner.plan(query, cfg);
+ * // plan/config are deterministic; update_stats() will not change adaptive aggregates
+ * \endcode
  */
 class QueryPlanner {
 public:
@@ -327,6 +373,9 @@ public:
 
     /** \brief Plan query execution.
      *
+     * Thread-safe: yes. May be called concurrently from multiple threads.
+     * Acquires shared lock for reading planner state; increments counters atomically.
+     *
      * \param query Query vector [dim]
      * \param config Base query configuration
      * \return Optimized query plan
@@ -335,6 +384,9 @@ public:
 
     /** \brief Update statistics from query execution.
      *
+     * Thread-safe: yes. May run concurrently with plan(); acquires exclusive lock
+     * to update history, cost model, and aggregate totals; increments counters atomically.
+     *
      * \param plan Executed plan
      * \param actual_time_ms Actual execution time
      * \param actual_recall Measured recall (if known)
@@ -342,7 +394,10 @@ public:
     auto update_stats(const QueryPlan& plan, float actual_time_ms,
                      std::optional<float> actual_recall = {}) -> void;
 
-    /** \brief Get planner statistics. */
+    /** \brief Get planner statistics.
+     *
+     * Thread-safe: yes. Reads counters atomically and aggregates under shared lock.
+     */
     struct PlannerStats {
         std::uint64_t plans_generated{0};
         std::uint64_t plans_executed{0};
