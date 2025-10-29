@@ -40,7 +40,7 @@ namespace vesper::index {
 #include <limits>
 #include <cstdlib>
 #include <functional>
-#include "expected"
+#include "vesper/expected_polyfill.hpp"
 
 #include <atomic>
 

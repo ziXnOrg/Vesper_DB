@@ -255,12 +255,21 @@ public:
         }
         
         const auto& ops = kernels::select_backend_auto();
-        
-        // Compute distances from query subvectors to all centroids
+
+        // If OPQ rotation is enabled, rotate the query once
+        const float* query_ptr = query;
+        std::vector<float> rotated_query;
+        if (has_rotation_) {
+            rotated_query.resize(dim_);
+            rotate_vec(query, rotated_query.data());
+            query_ptr = rotated_query.data();
+        }
+
+        // Compute distances from query subvectors to all centroids (in the space of the codebooks)
         for (std::uint32_t sq = 0; sq < m_; ++sq) {
-            const float* query_sub = query + sq * dsub_;
+            const float* query_sub = query_ptr + sq * dsub_;
             float* table_sub = table + sq * ksub_;
-            
+
             for (std::uint32_t k = 0; k < ksub_; ++k) {
                 const float* centroid = codebooks_->get_centroid(sq * ksub_ + k).data();
                 table_sub[k] = ops.l2_sq(
@@ -269,7 +278,7 @@ public:
                 );
             }
         }
-        
+
         return {};
     }
     
@@ -520,37 +529,57 @@ public:
 private:
     void encode_one_impl(const float* vec, std::uint8_t* code,
                         const kernels::KernelOps& ops) const {
+        // If OPQ rotation is enabled, rotate the input vector once
+        const float* vec_ptr = vec;
+        std::vector<float> rotated_vec;
+        if (has_rotation_) {
+            rotated_vec.resize(dim_);
+            rotate_vec(vec, rotated_vec.data());
+            vec_ptr = rotated_vec.data();
+        }
+
         for (std::uint32_t sq = 0; sq < m_; ++sq) {
-            const float* vec_sub = vec + sq * dsub_;
-            
+            const float* vec_sub = vec_ptr + sq * dsub_;
+
             // Find nearest centroid
             float min_dist = std::numeric_limits<float>::max();
             std::uint8_t best_idx = 0;
-            
+
             for (std::uint32_t k = 0; k < ksub_; ++k) {
                 const float* centroid = codebooks_->get_centroid(sq * ksub_ + k).data();
                 float dist = ops.l2_sq(
                     std::span(vec_sub, dsub_),
                     std::span(centroid, dsub_)
                 );
-                
+
                 if (dist < min_dist) {
                     min_dist = dist;
                     best_idx = static_cast<std::uint8_t>(k);
                 }
             }
-            
+
             code[sq] = best_idx;
         }
     }
-    
+
     void decode_one_impl(const std::uint8_t* code, float* vec) const {
+        if (!has_rotation_) {
+            for (std::uint32_t sq = 0; sq < m_; ++sq) {
+                const float* centroid = codebooks_->get_centroid(sq * ksub_ + code[sq]).data();
+                std::memcpy(vec + sq * dsub_, centroid, dsub_ * sizeof(float));
+            }
+            return;
+        }
+
+        // Reconstruct in rotated space first, then inverse-rotate back to original space
+        std::vector<float> tmp(dim_);
         for (std::uint32_t sq = 0; sq < m_; ++sq) {
             const float* centroid = codebooks_->get_centroid(sq * ksub_ + code[sq]).data();
-            std::memcpy(vec + sq * dsub_, centroid, dsub_ * sizeof(float));
+            std::memcpy(tmp.data() + sq * dsub_, centroid, dsub_ * sizeof(float));
         }
+        unrotate_vec(tmp.data(), vec);
     }
-    
+
     void initialize_pca_rotation(const float* data, std::size_t n, std::size_t dim) {
         // Compute covariance matrix for PCA
         std::vector<float> mean(dim, 0.0f);
@@ -586,7 +615,30 @@ private:
             }
         }
     }
-    
+
+    // Rotate a single vector x -> x' = x * R^T (dim_ floats)
+    void rotate_vec(const float* in, float* out) const {
+        for (std::size_t j = 0; j < dim_; ++j) {
+            float sum = 0.0f;
+            const std::size_t row_off = j * dim_;
+            for (std::size_t k = 0; k < dim_; ++k) {
+                sum += in[k] * rotation_matrix_[row_off + k];
+            }
+            out[j] = sum;
+        }
+    }
+
+    // Inverse-rotate a single vector x' -> x = x' * R (since R is orthonormal)
+    void unrotate_vec(const float* in, float* out) const {
+        for (std::size_t j = 0; j < dim_; ++j) {
+            float sum = 0.0f;
+            for (std::size_t k = 0; k < dim_; ++k) {
+                sum += in[k] * rotation_matrix_[k * dim_ + j];
+            }
+            out[j] = sum;
+        }
+    }
+
     void update_rotation_matrix(const float* data, std::size_t n, std::size_t dim, float reg) {
         // Update rotation using Procrustes analysis to minimize quantization error
         // Goal: Find orthogonal R that minimizes ||X - X_quantized * R^T||_F

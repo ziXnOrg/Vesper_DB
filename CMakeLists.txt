@@ -365,12 +365,19 @@ if (VESPER_ENABLE_TESTS)
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/test_hnsw_simple.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/index_manager_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/query_planner_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/projection_assigner_avx2_parity_test.cpp
   )
 
 
   add_executable(vesper_tests ${TEST_SOURCES})
   target_link_libraries(vesper_tests PRIVATE Catch2::Catch2WithMain vesper_headers vesper_core vesper_wal)
   target_include_directories(vesper_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+  # Standalone projection parity test (avoid linking vesper_wal)
+  add_executable(vesper_proj_parity tests/unit/projection_assigner_avx2_parity_test.cpp)
+  target_link_libraries(vesper_proj_parity PRIVATE Catch2::Catch2WithMain vesper_headers vesper_core)
+  target_include_directories(vesper_proj_parity PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  add_test(NAME vesper_proj_parity COMMAND $<TARGET_FILE:vesper_proj_parity>)
   # Exclude GoogleTest-based and standalone executables from Catch2 aggregate
   list(REMOVE_ITEM TEST_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/hnsw_test.cpp
@@ -384,6 +391,7 @@ if (VESPER_ENABLE_TESTS)
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/hnsw_connectivity_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/test_hnsw_batch.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/simple_integration_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/projection_assigner_avx2_parity_test.cpp
   )
 
 

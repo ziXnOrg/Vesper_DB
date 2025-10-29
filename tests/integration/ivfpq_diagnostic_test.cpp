@@ -209,14 +209,25 @@ TEST_CASE("IVF-PQ Diagnostic: PQ Codebook Quality", "[ivfpq][diagnostic]") {
         REQUIRE(!results->empty());
         
         auto [found_id, distance] = results->front();
-        std::cout << "Single vector self-search: ID=" << found_id 
+        std::cout << "Single vector self-search: ID=" << found_id
                   << ", distance=" << distance << "\n";
-        
-        // Self-distance should be very close to 0
+
+        // Verify the retrieved ID
         CHECK(found_id == 999999);
-        CHECK(distance < 0.1f);
+
+        // ADC parity: returned distance should match exact L2 to reconstructed vector
+        auto recon = index.reconstruct(999999);
+        REQUIRE(recon.has_value());
+        const auto& recon_vec = recon.value();
+        float exact_self = compute_l2_distance(single_vec.data(), recon_vec.data(), dim);
+        std::cout << "Reconstructed self-distance=" << exact_self << "\n";
+        REQUIRE(exact_self >= 0.0f);
+        CHECK_THAT(distance, Catch::Matchers::WithinRel(exact_self, 1e-4f));
+
+        // Sanity bound: reconstruction error should be reasonable for m=16, nbits=8
+        CHECK(exact_self < 1.0f);
     }
-    
+
     SECTION("Test 4: Parameter Impact on Recall") {
         std::cout << "\n=== Parameter Impact Test ===\n";
         

@@ -67,7 +67,7 @@ TEST_CASE("WAL torn tail only allowed on last file", "[wal][rotation]") {
       if (!de.is_regular_file()) continue;
       auto name = de.path().filename().string();
       if (name.rfind("wal-", 0) == 0) {
-        auto seq = std::stoull(name.substr(4, 8));
+        auto seq = std::stoull(name.substr(4, 10));
         if (seq > max_seq) { max_seq = seq; last = de.path(); }
       }
     }

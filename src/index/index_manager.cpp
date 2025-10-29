@@ -37,6 +37,8 @@
 #include <cstring>
 
 #include <execution>
+#include <mutex>
+
 #if defined(__AVX2__) || defined(_M_AVX2)
 #include <immintrin.h>
 #endif
@@ -168,6 +170,17 @@ public:
     // Debug accessor to expose IVF-PQ index to tests
     auto get_ivf_pq_index_debug() const -> const IvfPqIndex* { return ivf_pq_index_.get(); }
 #endif
+#ifdef VESPER_ENABLE_TESTS
+    void set_last_applied_query_config_debug(const QueryConfig& cfg) {
+        std::lock_guard<std::mutex> g(debug_mutex_);
+        last_applied_query_config_debug_ = cfg;
+    }
+    QueryConfig get_last_applied_query_config_debug() const {
+        std::lock_guard<std::mutex> g(debug_mutex_);
+        return last_applied_query_config_debug_;
+    }
+#endif
+
 
     auto get_memory_budget() const -> std::size_t { return memory_budget_mb_; }
 
@@ -348,12 +361,15 @@ public:
         // Select index based on configuration or query planner
         IndexType selected_index = IndexType::HNSW;
 
+        QueryConfig effective_config = config;
+
         if (config.preferred_index.has_value()) {
             selected_index = *config.preferred_index;
         } else if (config.use_query_planner && query_planner_) {
             // Use query planner to select optimal index
             auto plan = query_planner_->plan(query, config);
             selected_index = plan.index;
+            effective_config = plan.config;
         } else {
             // Simple heuristic: use fastest available index
             if (hnsw_index_) {
@@ -364,6 +380,10 @@ public:
                 selected_index = IndexType::DiskANN;
             }
         }
+
+#ifdef VESPER_ENABLE_TESTS
+        set_last_applied_query_config_debug(effective_config);
+#endif
 
         // Execute search on selected index
         std::vector<std::pair<std::uint64_t, float>> results;
@@ -1800,6 +1820,7 @@ private:
     // Index instances
     std::unique_ptr<HnswIndex> hnsw_index_;
     std::unique_ptr<IvfPqIndex> ivf_pq_index_;
+
     std::unique_ptr<DiskGraphIndex> disk_graph_index_;
 
     // Pending operations for batch processing
@@ -1824,6 +1845,11 @@ private:
 
     // Query planner (optional)
     std::shared_ptr<QueryPlanner> query_planner_;
+#ifdef VESPER_ENABLE_TESTS
+    mutable std::mutex debug_mutex_;
+    QueryConfig last_applied_query_config_debug_{};
+#endif
+
 
     // Thread safety
     mutable std::shared_mutex mutex_;
@@ -1859,6 +1885,11 @@ auto IndexManager::add_batch(const std::uint64_t* ids, const float* vectors, std
 auto IndexManager::ivf_pq_index_debug() const -> const IvfPqIndex* {
     return impl_->get_ivf_pq_index_debug();
 }
+
+auto IndexManager::last_applied_query_config_debug() const -> QueryConfig {
+    return impl_->get_last_applied_query_config_debug();
+}
+
 #endif
 
 auto IndexManager::search(const float* query, const QueryConfig& config)

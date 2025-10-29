@@ -7,6 +7,7 @@
 #include <expected>
 #include <filesystem>
 #include <functional>
+#include <vesper/expected_polyfill.hpp>
 #include <vesper/span_polyfill.hpp>
 
 #include "vesper/error.hpp"
@@ -24,19 +25,45 @@ namespace vesper::wal {
  */
 using ReplayCallback = std::function<void(std::uint64_t lsn, std::uint16_t type, std::span<const std::uint8_t> payload)>;
 
-/** \brief Replays frames' payloads post-snapshot cutoff across rotated files.
- *  \ingroup wal_api
- *  \return Aggregated RecoveryStats for delivered frames or error
+/** \brief Result-callback enabling early stop/error propagation and precise stats.
+ *  Return semantics:
+ *  - DeliverAndContinue => payload accepted; counted; continue
+ *  - DeliverAndStop     => accepted; counted; stop (ok(stats_so_far))
+ *  - Skip/SkipAndStop   => not delivered; not counted; stop if *_AndStop
+ *  - unexpected(error)  => stop with error
+ *  Example (stop deterministically after N payloads):
+ *  @code
+ *  std::size_t n = 0;
+ *  ReplayResultCallback cb = [&](std::uint64_t, std::uint16_t, std::span<const std::uint8_t>)
+ *      -> std::expected<DeliverDecision, vesper::core::error> {
+ *    return (++n == 5) ? DeliverDecision::DeliverAndStop
+ *                      : DeliverDecision::DeliverAndContinue;
+ *  };
+ *  auto st = recover_replay(dir, cb);
+ *  @endcode
  */
-auto recover_replay(const std::filesystem::path& dir, ReplayCallback on_payload)
+using ReplayResultCallback = std::function<std::expected<DeliverDecision, vesper::core::error>(std::uint64_t lsn, std::uint16_t type, std::span<const std::uint8_t> payload)>;
+
+/** \brief Replays frames' payloads post-snapshot cutoff across rotated files.
+ *  Stats reflect only delivered frames; early-stop not applicable for void-callback (always deliver).
+ *  \ingroup wal_api
+ *  \return Aggregated RecoveryStats for delivered frames or error */
+[[nodiscard]] auto recover_replay(const std::filesystem::path& dir, ReplayCallback on_payload)
     -> std::expected<RecoveryStats, vesper::core::error>;
 
+/// Result-callback overload (stats count only delivered frames; early-stop/error supported)
+[[nodiscard]] auto recover_replay(const std::filesystem::path& dir, ReplayResultCallback on_payload)
+    -> std::expected<RecoveryStats, vesper::core::error>;
 
 /** \brief Replay overload with type mask: only deliver frames with (1u << type) & type_mask.
+ *  \note RecoveryStats reflect post-filter delivery; with result-callback, early-stop semantics apply as above.
  *  \ingroup wal_api
- *  \note RecoveryStats reflect delivered frames post-filter.
  */
-auto recover_replay(const std::filesystem::path& dir, std::uint32_t type_mask, ReplayCallback on_payload)
+[[nodiscard]] auto recover_replay(const std::filesystem::path& dir, std::uint32_t type_mask, ReplayCallback on_payload)
+    -> std::expected<RecoveryStats, vesper::core::error>;
+
+/** Result-callback + type mask overload */
+[[nodiscard]] auto recover_replay(const std::filesystem::path& dir, std::uint32_t type_mask, ReplayResultCallback on_payload)
     -> std::expected<RecoveryStats, vesper::core::error>;
 
 } // namespace vesper::wal

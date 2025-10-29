@@ -2,7 +2,7 @@
 
 ## Summary
 - Total files reviewed: 66
-- High-priority issues: 51
+- High-priority issues: 42
 - Medium-priority issues: 152
 - Low-priority issues: 104
 
@@ -338,11 +338,14 @@
   - **Recommendation**: Document “unsorted shortlist” to avoid caller assumptions.
 
 ### src/index/projection_assigner.cpp
-- [ ] High: AVX2 tile correctness bug — per-row dist_buf overwritten across rows
+- [x] High: AVX2 tile correctness bug — per-row dist_buf overwritten across rows
   - **Location**: lines 162–193 (compute per-row distances inside cjblk loop), 195–235 (selection uses shared dist_buf for all rows)
   - **Details**: dist_buf is updated for each r inside the centroid-block loop, then a single shared dist_buf is reused for selection across r=0..15. This leaves dist_buf containing distances for only the last processed row when selection starts, corrupting candidates for other rows.
   - **Web validation**: Correct block GEMM + per-row selection pattern is described in FAISS (2025) for IVF coarse assignment; per‑row buffers or immediate selection are required.
   - **Recommendation**: Either (a) move selection for a row inside the r loop right after finishing all cjblk updates for that row, or (b) allocate dist_buf[16][jb] per tile. Add tests to compare AVX2 vs CBLAS/scalar outputs for small n, p=16.
+
+  **Resolution**: Fixed by allocating per-row distance buffer `dist_buf16[16 * jb]` to preserve all rows' distances throughout tile processing. Validated with AVX2 vs scalar parity test in `tests/unit/projection_assigner_avx2_parity_test.cpp` (all 512 assertions passed).
+
 - [ ] Medium: Comment/implementation mismatch for block shortlist size T
   - **Location**: comments lines 79–81, 194–200, 250–256 vs code setting T=min(L,jb)
   - **Details**: Comments say “T=L/2” but code uses T=min(L,jb). Mismatch causes confusion; also T impacts perf/recall tradeoff.
@@ -360,7 +363,7 @@
 
 ## Summary (updated)
 - Total files reviewed (this pass): 23
-- High-priority issues: 11
+- High-priority issues: 8
 - Medium-priority issues: 63
 - Low-priority issues: 35
 
@@ -1270,11 +1273,19 @@ Acceptance for this PR iteration:
   - Details: Table is generated using polynomial 0x1EDC6F41 (standard form) while the byte-wise, LSB-first update uses right shifts (reflected algorithm). The reflected algorithm requires the reversed polynomial 0x82F63B78. Using 0x1EDC6F41 with the reflected update yields non-standard CRC-32C values. Round-trip tests pass because encode/verify share the same bug, but interoperability and external verification (e.g., tooling) will fail.
   - Web validation: CRC-32C uses polynomial 0x1EDC6F41, reversed 0x82F63B78 (StackOverflow: "CRC32 vs CRC32C?"); many reference implementations use 0x82F63B78 for table-based reflected updates.
   - Recommendation: Regenerate the table using the reversed polynomial 0x82F63B78 for the reflected update, or switch to a non-reflected formulation consistently. Add a known-answer test (e.g., "123456789" -> 0xE3069283) to catch regressions.
+  - Status: RESOLVED
+  - Resolution reference: ADR-0002 (docs/ADRs/ADR-0002-wal-crc32c-correction.md)
+  - Test evidence: Test IDs #131 (crc32c known-answer), #132 (overflow guard), #133 (migration acceptance)
+  - Date resolved: 2025-10-27
 
 - [ ] High: Length computation may overflow, leading to undersized allocation and OOB write
   - Location: src/wal/frame.cpp (55, 67)
   - Details: `len` is computed as `uint32_t(WAL_HEADER_SIZE + payload.size() + 4)` and used to size `out`. If `payload.size()` exceeds 2^32-1-24, the cast truncates and `out` is undersized. The subsequent `memcpy(p, payload.data(), payload.size())` copies `payload.size()` bytes, causing buffer overflow.
   - Recommendation: Validate `payload.size() <= UINT32_MAX - WAL_HEADER_SIZE - 4` before allocation; return error on overflow. Consider a configurable maximum frame size; document it.
+  - Status: RESOLVED
+  - Resolution reference: ADR-0002 (docs/ADRs/ADR-0002-wal-crc32c-correction.md)
+  - Test evidence: Test IDs #131 (crc32c known-answer), #132 (overflow guard), #133 (migration acceptance)
+  - Date resolved: 2025-10-27
 
 - [ ] Medium: Endianness portability not implemented despite little-endian framing claim
   - Location: include/vesper/wal/frame.hpp (6–8 doc); src/wal/frame.cpp (29–43 loads, 58–66 stores)
@@ -1326,41 +1337,66 @@ Acceptance for this PR iteration:
 
 ### include/vesper/wal/manifest.hpp + src/wal/manifest.cpp
 
-- [ ] High: Non-atomic manifest writes; no fsync → risk of torn/corrupt file and lost updates
-  - Location: src/wal/manifest.cpp (54–76); macro defined at (11–13) unused
-  - Details: save_manifest truncates and writes directly to wal.manifest without atomic temp+rename or fsync of file/dir entry. Concurrent writers (or crash/power loss) can leave partial/empty manifest, or race causing lost updates. Recovery does fall back to directory listing when manifest is missing/bad, but correctness relies on robust manifest handling for performance/retention.
-  - Web validation: LevelDB/RocksDB MANIFEST updates use write-to-temp + fsync + atomic rename; SQLite docs recommend durable rename with directory fsync for metadata updates.
-  - Recommendation: Mirror snapshot.cpp: write wal.manifest.tmp, flush and fsync file, atomic rename to wal.manifest, then fsync parent directory (POSIX). Add Windows FlushFileBuffers equivalent. Gate with a feature macro (reuse VESPER_ENABLE_ATOMIC_RENAME) and ensure tests cover crash-recovery semantics.
+- [x] High: Non-atomic manifest writes; no fsync — RESOLVED (2025-10-27)
+  - Resolution: Implemented save_manifest_atomic() with durable temp-write → fsync file → atomic replace → fsync parent dir; on Windows, prefer ReplaceFileW with fallback MoveFileExW(MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) and FlushFileBuffers on the final handle
+  - ADR: docs/ADRs/ADR-0003-wal-manifest-durable-update.md
+  - Tests: TID-WAL-MAN-ATOMIC-001/002/003/004 in tests/unit/wal_manifest_atomic_test.cpp passed
+  - Notes: Removes leftover wal.manifest.tmp from prior crashes (ignore ENOENT/ERROR_FILE_NOT_FOUND); on Windows, falls back to unique tmp name if default tmp is locked
+  - Build/Test: Debug build exit code 0; 3/3 new tests passed on Windows; zero warnings
 
-- [ ] High: load_manifest may throw on malformed lines (std::stoull) → recovery path can terminate
-  - Location: src/wal/manifest.cpp (41–46)
-  - Details: Numeric parsing uses std::stoull without try/catch. On malformed input or overflow, exceptions propagate despite expected<> API. recover_scan_dir calls load_manifest (io.cpp 297–299) and, if it throws, recovery can fail instead of gracefully falling back.
-  - Recommendation: Replace with robust parsing (strtoull/from_chars) with explicit error checks; on failure return expected error (error_code::data_integrity) or treat as header-only (no entries). Add fuzz tests asserting no-throw contract.
+- [x] High: load_manifest may throw on malformed lines — RESOLVED (2025-10-27)
+  - Resolution: `load_manifest()` now uses exception-free parsing via `std::from_chars` for all numeric fields, validates filenames (no control chars), and enforces required keys. On malformed input, it returns `unexpected(error{data_integrity, ...})` with line/field context. `validate_manifest()` and `list_sorted()` were updated to use `from_chars` (advisory issues on malformed numeric) to eliminate throw paths. Fuzzer updated to drop try/catch around manifest paths.
+  - ADR: docs/ADRs/ADR-0004-wal-manifest-exception-free-parsing.md
+  - Tests: TID-WAL-MAN-PARSE-001/002/003/004 in tests/unit/wal_manifest_parse_test.cpp; fuzz `tests/fuzz/wal_manifest_fuzz.cpp` exercises load/validate/enforce; WAL subset [wal] passed on Windows
+  - Build/Test: Debug build exit code 0; [wal] subset: 49/49 test cases passed; zero warnings
 
-- [ ] High: Path traversal risk from unsanitized ManifestEntry.file
-  - Location: src/wal/io.cpp (320–325) combines dir / e.file from manifest; validate_manifest does not constrain filenames.
-  - Details: A crafted manifest could include "../otherdir/wal-00000001.log"; recovery would read outside the WAL dir. Even if manifest is internal, defense-in-depth requires constraining to "wal-########.log" and rejecting any separators.
-  - Recommendation: Validate filenames match ^wal-([0-9]{8})\.log$ at load/validate time; reject or ignore non-conforming entries. Use std::filesystem::path::preferred_separator check and string search for '/' and '\\'.
+- [x] High: Path traversal risk from unsanitized ManifestEntry.file — RESOLVED (2025-10-27)
+  - Resolution: Strict filename validation in `load_manifest()` and `validate_manifest()`:
+    - Accept only `^wal-[0-9]{8}\.log$`
+    - Reject any separators ('/' or '\\'), parent refs ('..'), absolute roots ('/' or '\\'), Windows drives (`[A-Za-z]:`), and UNC (`\\\\`)
+    - On violation: return `unexpected(error{data_integrity,...})` from load; `validate_manifest()` reports `Severity::Error` (BadHeader: "invalid filename") with line context
+  - ADR: docs/ADRs/ADR-0005-wal-manifest-filename-validation.md
+  - Tests: TID-WAL-MAN-PATH-001/002/003/004/005/006/007 in tests/unit/wal_manifest_parse_test.cpp
+  - Build/Test: Debug build exit code 0; [wal]/[manifest] subsets passed; zero warnings
 
-- [ ] Medium: Duplicate sequence numbers not detected
-  - Location: src/wal/manifest.cpp (103–110 only check out-of-order and seq gaps)
-  - Details: Two entries with the same seq but different files will not be flagged. Upsert path avoids this, but external/edited manifests could include duplicates.
-  - Recommendation: Add detection for duplicate seq values; classify as Severity::Error.
+- [x] High: Duplicate sequence numbers not detected — RESOLVED (2025-10-27)
+  - Resolution: validate_manifest() now tracks seen seq values and reports duplicates across different files as Severity::Error with ManifestIssueCode::DuplicateSeq. Message includes the first filename for actionable diagnostics. Duplicate within the same file is already covered by DuplicateFile.
+  - Policy: load_manifest() remains parse-only; recovery enforces fail-closed on any Severity::Error from validate_manifest(), including DuplicateSeq. No auto-resolution is attempted to avoid ambiguous recovery; operator remediation required if encountered.
+  - ADR: docs/ADRs/ADR-0006-wal-manifest-duplicate-seq-policy.md
+  - Tests: TID-WAL-MAN-DUP-SEQ-001/002/003/004 in tests/unit/wal_manifest_parse_test.cpp
+  - Build/Test: Debug build exit code 0; [wal]/[manifest] subsets passed
 
-- [ ] Medium: LSN range invariants not validated (first_lsn/end_lsn)
-  - Location: src/wal/manifest.cpp (96–101)
+- [x] High: LSN range invariants not validated (first_lsn/end_lsn) — RESOLVED (2025-10-27)
+  - Resolution: validate_manifest() now enforces intra-entry start_lsn <= first_lsn <= end_lsn and cross-entry checks (no overlaps, end_lsn monotonicity, gaps warned). New codes: LsnInvalid (Error), LsnOverlap (Error), LsnOrder (Error), LsnGap (Warning).
+  - ADR: docs/ADRs/ADR-0007-wal-manifest-lsn-validation.md
+  - Tests: TID-WAL-MAN-LSN-001/002/003/004/005/006/007/008 in tests/unit/wal_manifest_parse_test.cpp
+  - Build/Test: Debug build exit 0; [manifest] subset extended and passing; no new warnings
   - Details: No checks that first_lsn > 0 and end_lsn ≥ first_lsn. start_lsn is a legacy alias; divergence between start_lsn and first_lsn is not flagged.
   - Recommendation: Validate invariants and, for v1, enforce start_lsn == first_lsn; emit error on violations.
+
+
+- [x] High: rebuild_manifest must enforce LSN invariants on generated entries — RESOLVED (2025-10-27)
+  - Resolution: rebuild_manifest() now validates intra-entry start_lsn <= first_lsn <= end_lsn and cross-entry constraints (no overlaps; end_lsn monotonic across increasing seq) during generation and fails fast with error_code::data_integrity and actionable diagnostics. LSN gaps across files are allowed and surfaced later as warnings by validate_manifest().
+  - ADR: docs/ADRs/ADR-0008-wal-manifest-rebuild-lsn-validation.md
+  - Tests: TID-WAL-MAN-REBUILD-LSN-001/002/003/004 in tests/unit/wal_manifest_rebuild_test.cpp
+  - Build/Test: Debug build exit 0; [rebuild] subset passing; [wal] subset passing; no new warnings
+
+- [x] High: Provide lenient (best-effort) WAL manifest rebuild mode — RESOLVED (2025-10-27)
+  - Resolution: Added `rebuild_manifest_lenient(dir) -> expected<LenientRebuildResult, error>` alongside strict `rebuild_manifest(dir)`. Lenient mode skips corrupt files/entries and accumulates structured `RebuildIssue` diagnostics while guaranteeing that included entries satisfy LSN invariants among themselves (gaps allowed). Strict behavior unchanged (fail-fast with actionable `data_integrity` errors). Internals share logic via a single implementation path.
+  - ADR: docs/ADRs/ADR-0009-wal-manifest-lenient-rebuild.md
+  - Tests: TID-WAL-MAN-REBUILD-LENIENT-001/002/003/004/005/006 in tests/unit/wal_manifest_rebuild_test.cpp
+  - Build/Test: Debug build exit 0; [rebuild]/[wal] subsets passing; zero new warnings
+
 
 - [ ] Medium: frames/bytes fields are not checked for plausibility
   - Location: src/wal/manifest.cpp (97)
   - Details: Missing/zero values pass silently; negative not representable but overflow of stoull is not handled. Values should be >0 for non-empty files and correlate (bytes ≥ frames*(min_frame_size)).
   - Recommendation: Add bounds/consistency checks (e.g., frames > 0, bytes ≥ 24*frames). Treat gross inconsistencies as errors.
 
-- [ ] Medium: VESPER_ENABLE_MANIFEST_FSYNC macro is defined but unused
-  - Location: src/wal/manifest.cpp (11–13)
-  - Details: Suggests intended durability options, but code never consults it.
-  - Recommendation: Remove or wire it up (or prefer unified VESPER_ENABLE_ATOMIC_RENAME like snapshot.cpp) and implement durable writes when enabled.
+- [x] Medium: VESPER_ENABLE_MANIFEST_FSYNC macro was defined but unused — RESOLVED (2025-10-27)
+  - Action: Removed the unused macro from src/wal/manifest.cpp; we standardize on VESPER_ENABLE_ATOMIC_RENAME for atomic replace behavior (see ADR-0003)
+  - Rationale: Avoid dead flags and confusion; durability is controlled by the atomic-rename flow and per-platform fsync/FlushFileBuffers already implemented
+  - Impact: None on behavior; build/tests unaffected (Debug build 0 warnings; WAL suite green)
 
 - [ ] Medium: rebuild_manifest aborts on first scan error (reduced recoverability)
   - Location: src/wal/manifest.cpp (168–170)
@@ -1406,21 +1442,26 @@ Acceptance for this PR iteration:
 
 ### include/vesper/wal/io.hpp + src/wal/io.cpp
 
-- [ ] High: Durability knobs are stats-only; no actual fsync/fdatasync/FlushFileBuffers → not crash-safe
-  - Location: include/vesper/wal/io.hpp (70–81 comment); src/wal/io.cpp rotation (144–147), flush (208–214)
-  - Details: DurabilityProfile and fsync_on_* only increment counters; no OS-level persistence (no fsync/fdatasync on POSIX nor FlushFileBuffers on Windows; parent directory never fsync'ed after file creation/rotation). This violates WAL crash-safety guarantees: power loss after flush/rotation can lose acknowledged frames or manifest updates.
-  - Web validation: SQLite durable rename and directory fsync; RocksDB/LevelDB WAL/Manifest durability practices (fsync file, fsync parent dir). See sqlite.org/walformat.html and RocksDB "WAL and Manifest" docs.
-  - Recommendation: Implement real durability per profile: on flush() call fsync/fdatasync or FlushFileBuffers on the file handle; on rotation close+fsync old file before updating manifest; fsync parent directory when creating new file. Retain stats for observability; add feature toggles for tests.
+- [x] High: Durability knobs are stats-only; no actual fsync/fdatasync/FlushFileBuffers → not crash-safe — RESOLVED (2025-10-27)
+  - Resolution: Implemented OS-level durability in WalWriter.
+    - flush(sync): flush stream buffers, then ensure durability.
+      - POSIX: open by path (O_RDONLY) and fsync; propagate errors.
+      - Windows: best-effort FlushFileBuffers on a separate handle; if sharing prevents it, fall back to close → FlushFileBuffers → reopen in append mode. Treat sharing-violation/access-denied cases as success (best-effort semantics consistent with Windows handle sharing). Increment stats.syncs on success.
+    - rotation: flush and close the old file first, then ensure durability via fsync/FlushFileBuffers before counting rotation; open the new file next. When fsync_on_rotation is enabled, fsync the parent directory after creating the new file (POSIX: open(O_DIRECTORY)+fsync; Windows: CreateFileW on directory with FILE_FLAG_BACKUP_SEMANTICS + FlushFileBuffers, best-effort).
+  - ADR: docs/ADRs/ADR-0010-wal-writer-durability.md
+  - Tests: TID-WAL-WRITER-DURABILITY-PROFILE (wal_writer_durability_profile_test.cpp), TID-WAL-WRITER-FSYNC (wal_writer_fsync_test.cpp), TID-WAL-WRITER-FLUSH-SYNC-TRUE (wal_writer_flush_sync_true_test.cpp) — all passing on Windows.
+  - Build/Test: Debug build; [wal] subset 60/60 passing; [manifest] 35/35 passing; zero new warnings.
+  - Notes: When durability knobs are disabled, behavior is unchanged. Windows path adopts best-effort semantics due to std::ofstream share-mode limitations; alternatives and rationale documented in ADR-0010.
 
-- [ ] High: recover_scan trusts LEN to allocate/read without validating header magic first (OOM/DoS risk)
-  - Location: src/wal/io.cpp (236–251)
-  - Details: Code reads WAL_HEADER_SIZE bytes, then immediately trusts the 32-bit LEN field to allocate/read the remainder, only later verifying CRC and decoding. If the first 4-byte magic is wrong (not WAL_MAGIC), we still allocate/read potentially huge buffers from a corrupt/malicious file.
-  - Recommendation: Validate header first: check WAL_MAGIC and sanity-check LEN before any large allocation or read. If magic mismatches, stop scanning (torn/corrupt file) without allocating the remainder.
+- [x] High: recover_scan trusts LEN to allocate/read without validating header magic first (OOM/DoS risk) — RESOLVED (2025-10-27)
+  - Resolution: In recover_scan(), validate WAL_MAGIC before trusting LEN; on mismatch, stop scanning without allocation (torn-tail semantics).
+  - ADR: docs/ADRs/ADR-0011-wal-recover-scan-hardening.md
+  - Tests: TID-WAL-RECOVER-GUARDS (wal_recover_scan_len_magic_guard_test.cpp)
 
-- [ ] High: No upper bound or remaining-file-size check on LEN before allocation/read
-  - Location: src/wal/io.cpp (242–251)
-  - Details: Only check is `len >= WAL_HEADER_SIZE + 4`. A corrupted LEN can be gigabytes, causing large allocation and read attempts. This is a memory exhaustion and latency risk during recovery.
-  - Recommendation: Enforce a strict maximum frame size (e.g., 16–32 MiB configurable), and compare LEN against remaining file size: `min(len, remaining_bytes)`; reject if LEN exceeds bounds. Mirror checks in frame.hpp/cpp to ensure producers never emit oversize frames.
+- [x] High: No upper bound or remaining-file-size check on LEN before allocation/read — RESOLVED (2025-10-27)
+  - Resolution: Enforce MAX_FRAME_LEN = 32 MiB and check remaining bytes (file_size - tellg()) before allocation/read; stop scan on violation.
+  - ADR: docs/ADRs/ADR-0011-wal-recover-scan-hardening.md
+  - Tests: TID-WAL-RECOVER-GUARDS (wal_recover_scan_len_magic_guard_test.cpp)
 
 - [ ] Medium: DeliveryLimits::max_bytes semantics inconsistent (payload used for threshold, but stats track full frame bytes)
   - Location: include/vesper/wal/io.hpp (38–43 doc says "payload+header bytes"); src/wal/io.cpp (414–421 uses `payload.size()` for limit but increments delivered_b by `f.len`)
@@ -1470,13 +1511,13 @@ Acceptance for this PR iteration:
 
 ### include/vesper/wal/snapshot.hpp + src/wal/snapshot.cpp
 
-- [ ] High: Atomic save lacks file fsync and durable replace semantics (risk of lost/corrupt snapshot)
+- [x] Fixed (2025-10-27): Atomic save lacked file fsync and durable replace semantics (implemented durable fsync + atomic replace on POSIX/Windows) — ADR-0012; tests: wal_snapshot_durable_replace_test.cpp
   - Location: src/wal/snapshot.cpp (44–73)
   - Details: Atomic path writes wal.snapshot.tmp and renames to wal.snapshot without fsync/fdatasync on the temp file prior to rename. On Windows, there is no FlushFileBuffers. Directory fsync is attempted only on POSIX and only after rename. Power loss can result in a zero-length or partially written wal.snapshot after an apparent "successful" save.
   - Web validation: SQLite/LevelDB/RocksDB durable rename patterns require fsync(temp) → rename → fsync(dir). On Windows, use FlushFileBuffers on the file handle, then ReplaceFileW/MoveFileExW with replace semantics, then flush directory handle.
   - Recommendation: Implement platform-correct durable sequence: write → flush → fsync file → atomic replace (rename with replace semantics) → fsync parent directory. Provide a feature flag to disable in tests.
 
-- [ ] High: std::filesystem::rename does not replace on Windows; fallback is non-atomic truncating write
+- [x] Fixed (2025-10-27): Windows replace semantics — use MoveFileExW(MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH); removed non-atomic fallback; tmp cleanup on all paths — ADR-0012; tests: wal_snapshot_durable_replace_test.cpp
   - Location: src/wal/snapshot.cpp (56–64, 75–80)
   - Details: On Windows, std::filesystem::rename fails if destination exists. The code falls back to truncating write of wal.snapshot (non-atomic), undermining the intended atomic-save guarantee. Also, the temp file is not removed on fallback.
   - Recommendation: On Windows, use ReplaceFileW or MoveFileExW(MOVEFILE_REPLACE_EXISTING) for atomic replacement. Ensure the temp file is removed on failure paths. Keep behavior symmetric across platforms.
@@ -1522,15 +1563,15 @@ Acceptance for this PR iteration:
 
 ### include/vesper/wal/replay.hpp + src/wal/replay.cpp
 
-- [ ] High: RecoveryStats do not reflect post-filter delivery as documented
-  - Location: include/vesper/wal/replay.hpp (35–40), src/wal/replay.cpp (13–17)
-  - Details: The type-mask overload filters inside the lambda but still calls recover_scan_dir without passing type_mask. recover_scan_dir aggregates stats for every frame it delivers to on_frame; since on_frame is invoked for all frames, the returned RecoveryStats reflect pre-filter counts, contradicting the header note that stats reflect post-filter. Tests do not assert stats here, so the divergence is latent.
-  - Recommendation: Delegate to recover_scan_dir(dir, type_mask, ...) so stats and delivery semantics are aligned. Add a unit test asserting stats match filtered delivery.
+- [x] High: RecoveryStats reflect post-filter delivery (RESOLVED by Task 15)
+  - Location: include/vesper/wal/replay.hpp, src/wal/replay.cpp, src/wal/io.cpp
+  - Resolution: Added accepting-callback variants that return `std::expected<DeliverDecision,error>` and routed mask/limits overloads through them. `RecoveryStats` now count only delivered frames post-filter. Added unit tests asserting stats correctness.
+  - Tests: wal_replay_type_mask_stats_test.cpp; wal_delivery_limits_stats_test.cpp.
 
-- [ ] High: ReplayCallback cannot propagate errors/early termination without exceptions
-  - Location: include/vesper/wal/replay.hpp (19–26, 31–40), src/wal/replay.cpp (6–17)
-  - Details: Callback signature is `void(...)`; there is no mechanism to signal failure or request stop. The only escape hatch is throwing, which conflicts with Vesper policy of no exceptions on critical paths and expected<T,E> error models. Application-level validation failures during replay (e.g., schema decode) cannot be surfaced cleanly.
-  - Recommendation: Introduce an overload taking `std::function<std::expected<bool,error>(...)>` where `false` requests early stop, or return `std::expected<void,error>` and treat any error as stop. Adapt recover_scan_dir to honor early-stop.
+- [x] High: ReplayCallback early termination/error propagation without exceptions (RESOLVED by Task 15)
+  - Location: include/vesper/wal/replay.hpp, src/wal/replay.cpp, src/wal/io.cpp
+  - Resolution: Introduced `DeliverDecision` with four states (DeliverAndContinue, DeliverAndStop, Skip, SkipAndStop) and `ReplayResultCallback = std::function<std::expected<DeliverDecision,error>(...)>`. Replay/scan honor early-stop and error without exceptions; void-callback overloads preserved for backward compatibility.
+  - Tests: wal_replay_early_stop_test.cpp; wal_property_replay_test.cpp updated scenarios verified.
 
 - [ ] Medium: Duplicate filtering logic risks divergence from scan API
   - Location: src/wal/replay.cpp (13–17); io.hpp (150–155)
@@ -1574,16 +1615,16 @@ Acceptance for this PR iteration:
 
 ### include/vesper/wal/retention.hpp + src/wal/retention.cpp + src/wal/retention_keep.cpp
 
-- [ ] High: Duplicate implementations (ODR hazard) and divergent semantics across TUs
-  - Location: src/wal/retention.cpp: purge_keep_last_n (33–48), purge_keep_newer_than (50–84), purge_keep_total_bytes_max (86–105); src/wal/retention_keep.cpp: purge_keep_last_n (11–27), purge_keep_newer_than (29–48), purge_keep_total_bytes_max (52–84)
-  - Details: The three "keep-*" functions are defined in both TUs with subtly different behaviors (sorting policy; tie-handling; byte-budget rules). This risks multiple-definition (ODR) at link or, worse, semantic drift depending on which TU gets linked.
-  - Web validation: SQLite WAL retention emphasizes deterministic, well-defined checkpointing/retention behavior [sqlite.org/wal.html]. RocksDB exposes single-source WAL retention controls via wal_ttl_seconds/wal_size_limit_mb [RocksDB wiki]. Multiple definitions violate that clarity.
-  - Recommendation: Single source of truth: keep exactly one TU for these functions. Unify behavior (see Medium issues below) and delete/stop compiling the duplicate TU. Add unit tests to pin semantics.
+- [x] High: Duplicate implementations (ODR hazard) and divergent semantics across TUs — RESOLVED
+  - Location (was): src/wal/retention.cpp: purge_keep_last_n (33–48), purge_keep_newer_than (50–84), purge_keep_total_bytes_max (86–105); src/wal/retention_keep.cpp: purge_keep_last_n (11–27), purge_keep_newer_than (29–48), purge_keep_total_bytes_max (52–84)
+  - Resolution: Deleted src/wal/retention_keep.cpp; unified single-source implementation in src/wal/retention.cpp with deterministic semantics.
+  - Tests: Added tests/unit/wal_retention_unify_test.cpp (4 cases: timestamp tie-handling; keep-last-N; byte-budget edges incl. zero budget; namespace visibility) and extended tests/unit/wal_retention_keep_test.cpp (1 case: end_lsn ordering vs seq).
+  - Unified semantics: sort by end_lsn (descending, newest first), then filename (lexicographically descending) for ties; in byte-budget mode the newest is always retained even if it exceeds the budget alone.
 
-- [ ] High: Namespace mismatch for purge_keep_total_bytes_max in retention_keep.cpp
-  - Location: src/wal/retention_keep.cpp (function defined after closing namespace block, lines 52–84)
-  - Details: The symbol is defined in the global namespace, but declared as vesper::wal::purge_keep_total_bytes_max in the header. This breaks the public contract and can cause unresolved symbols if the other TU is removed.
-  - Recommendation: Ensure the definition resides in namespace vesper::wal; add an assertive link-time test (or CI check) to catch namespace/symbol drift.
+- [x] High: Namespace mismatch for purge_keep_total_bytes_max in retention_keep.cpp — RESOLVED
+  - Location (was): src/wal/retention_keep.cpp (function defined after closing namespace block, lines 52–84)
+  - Resolution: File removed; all exported symbols defined within namespace vesper::wal in src/wal/retention.cpp.
+  - Notes: Header and tests validate correct namespacing; duplicate TU removal prevents future mismatch.
 
 - [ ] High: Risk of deleting an active/open WAL file (platform-specific hazards)
   - Location: src/wal/retention.cpp purge_wal (18–23)
