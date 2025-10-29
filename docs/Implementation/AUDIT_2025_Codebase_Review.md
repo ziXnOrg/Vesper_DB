@@ -35,10 +35,11 @@
   - **Recommendation**: Add brief performance guidance.
 
 
-- [ ] High: ABI stability — STL and std::expected in public C++ API
+- [x] High: ABI stability — STL and std::expected in public C++ API — RESOLVED (2025-10-29)
   - **Location**: train/encode/decode/compute_* declarations (74–162), save/load (202–207)
   - **Details**: The header exposes std::expected and std::string in public signatures. These are not ABI-stable across compilers/STL implementations.
   - **Recommendation**: Document that the C++ API is not ABI-stable across DSOs; prefer the C API for cross-boundary use. Optionally add filesystem::path overloads for save/load.
+  - **Resolution**: Added ABI guidance note to include/vesper/index/product_quantizer.hpp; implemented std::filesystem::path overloads for save/load while preserving existing std::string overloads; added unit test tests/unit/product_quantizer_save_load_path_test.cpp; validated with Ninja+MSVC Debug build — [pq][io] subset and full suite passing; no new warnings.
 
 - [ ] Medium: Preconditions mismatch (n ≥ ksub vs implementation n ≥ ksub·m)
   - **Location**: Header train() docs (71–73); Implementation src/index/product_quantizer.cpp (43–50)
@@ -77,10 +78,13 @@
   - **Details**: Calling before train/import_pretrained may dereference null codebooks_.
   - **Recommendation**: Document precondition “must be trained”. In Phase 2, add runtime guards and return errors (or asserts in non-API hot paths).
 
-- [ ] High: compute_batch_distances buffer sizing and empty-block handling
+- [x] High: compute_batch_distances buffer sizing and empty-block handling — RESOLVED (2025-10-29)
   - **Location**: inline compute_batch_distances() (270–284)
   - **Details**: Uses blocks[0].size() to size per-query slice. For n < block_size or when blocks is empty, this under-allocates or dereferences out-of-bounds. compute_distances() uses stride = blocks.size()·block_size, creating mismatch.
   - **Recommendation**: Document expected output layout (stride = blocks.size()·block_size); validate non-empty blocks; compute total_codes from per-block sizes or pad consistently; add tests for n < block_size.
+  - **Resolution**: Added empty-input guard; fixed per-query stride to use `pq.config().block_size`; updated documentation for both compute_batch_distances and compute_distances to state layout and padding semantics.
+  - **Tests**: Added `tests/unit/pq_fastscan_batch_distances_layout_test.cpp` covering empty blocks, partial single block, and multi-block partial tail with multi-query stride verification.
+  - **Validation**: Ninja+MSVC Debug build succeeded; targeted tests passed (137 assertions in 3 test cases, filter [pq][fastscan][batch]); full suite passed (8507 assertions in 188 test cases); zero new warnings.
 
 - [ ] High: ABI stability — public API exposes STL containers and std::span
   - **Location**: encode_blocks() returns std::vector<PqCodeBlock> (136–138); compute_distances() takes std::vector<PqCodeBlock> (153–155); import_pretrained() takes std::span (202)
@@ -363,7 +367,7 @@
 
 ## Summary (updated)
 - Total files reviewed (this pass): 23
-- High-priority issues: 8
+- High-priority issues: 6
 - Medium-priority issues: 63
 - Low-priority issues: 35
 
