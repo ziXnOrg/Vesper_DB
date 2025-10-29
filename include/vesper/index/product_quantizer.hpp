@@ -7,13 +7,20 @@
  * independently. Enables fast approximate distance computation via lookup tables.
  *
  * Features:
- * - Configurable subspace partitioning (m subquantizers)  
+ * - Configurable subspace partitioning (m subquantizers)
  * - 8-bit codes for memory efficiency
  * - Asymmetric Distance Computation (ADC) with precomputed tables
  * - Optional OPQ rotation for improved quantization
  *
  * Thread-safety: Training is single-threaded; encoding/decoding are thread-safe.
  * Memory: O(m * ksub * dsub) for codebooks, O(m) bytes per encoded vector.
+ */
+/**
+ * ABI note: The public C++ API in this header uses STL types (e.g., std::string)
+ * and std::expected in function signatures. These are not guaranteed ABI-stable
+ * across compilers, standard libraries, or differing CRT/ABI versions. As a result,
+ * the C++ API is intended for in-process use with the same toolchain. For cross-DSO
+ * or FFI/plugin boundaries, prefer the stable C API under include/vesper/c/.
  */
 
 #include <cstdint>
@@ -23,6 +30,7 @@
 #include <memory>
 #include <optional>
 
+#include <filesystem>
 #include "vesper/error.hpp"
 
 namespace vesper::index {
@@ -182,7 +190,7 @@ public:
         std::size_t dim{0};              /**< Total dimension */
         bool has_rotation{false};        /**< OPQ rotation applied */
     };
-    
+
     auto get_info() const noexcept -> Info;
 
     /** \brief Check if quantizer is trained. */
@@ -203,8 +211,19 @@ public:
     auto save(const std::string& path) const -> std::expected<void, core::error>;
 
     /** \brief Load quantizer from file. */
-    static auto load(const std::string& path) 
+    static auto load(const std::string& path)
         -> std::expected<ProductQuantizer, core::error>;
+
+    /** \brief Save quantizer to file (filesystem path overload).
+     *
+     * Provided for ergonomics. ABI guidance above still applies.
+     */
+    auto save(const std::filesystem::path& path) const -> std::expected<void, core::error>;
+
+    /** \brief Load quantizer from file (filesystem path overload). */
+    static auto load(const std::filesystem::path& path)
+        -> std::expected<ProductQuantizer, core::error>;
+
 
 private:
     class Impl;
