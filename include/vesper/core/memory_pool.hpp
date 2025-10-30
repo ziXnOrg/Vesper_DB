@@ -19,6 +19,7 @@
 #include <vector>
 #include <atomic>
 #include <thread>
+#include <limits>
 #include "vesper/platform/memory.hpp"
 
 namespace vesper::core {
@@ -32,7 +33,7 @@ class MemoryArena {
 public:
     static constexpr std::size_t DEFAULT_SIZE = 64 * 1024 * 1024;  // 64MB
     static constexpr std::size_t ALIGNMENT = 64;  // Cache line size
-    
+
     explicit MemoryArena(std::size_t size = DEFAULT_SIZE)
         : size_(align_up(size, ALIGNMENT))
         , used_(0) {
@@ -42,14 +43,14 @@ public:
             throw std::bad_alloc();
         }
     }
-    
+
     ~MemoryArena() {
         vesper::platform::aligned_deallocate(buffer_);
     }
-    
+
     MemoryArena(const MemoryArena&) = delete;
     MemoryArena& operator=(const MemoryArena&) = delete;
-    
+
     MemoryArena(MemoryArena&& other) noexcept
         : buffer_(other.buffer_)
         , size_(other.size_)
@@ -58,47 +59,87 @@ public:
         other.size_ = 0;
         other.used_ = 0;
     }
-    
-    /** \brief Allocate memory from arena. */
-    [[nodiscard]] auto allocate(std::size_t bytes, 
+
+    /** \brief Allocate memory from arena (overflow-safe, no-throw hot path).
+     *  \param bytes [in] requested number of bytes (may be 0)
+     *  \param alignment [in] alignment in bytes; must be non-zero power-of-two (default 64)
+     *  \return pointer to aligned storage within the arena, or nullptr on failure
+     *  \pre alignment != 0 and is a power-of-two; bytes does not overflow when rounded up to alignment
+     *  \post On success, `used_` increases by the aligned byte count and remains \c <= size_. On failure, state is unchanged.
+     *  \thread_safety Not thread-safe. Intended for thread-local arenas only.
+     *  \complexity O(1)
+     *  \warning Returns nullptr on exhaustion, invalid alignment, or arithmetic overflow; never throws on this path.
+     */
+    [[nodiscard]] auto allocate(std::size_t bytes,
                                 std::size_t alignment = ALIGNMENT) -> void* {
-        bytes = align_up(bytes, alignment);
-        
-        const std::size_t offset = align_up(used_, alignment);
-        if (offset + bytes > size_) {
-            return nullptr;  // Arena exhausted
+        // Validate alignment: non-zero power-of-two
+        if (alignment == 0 || (alignment & (alignment - 1)) != 0) {
+            return nullptr;
         }
-        
+        const std::size_t mask = alignment - 1;
+
+        // Overflow-safe round-up of requested size
+        if (bytes != 0) {
+            const std::size_t maxv = (std::numeric_limits<std::size_t>::max)();
+            if (bytes > maxv - mask) {
+                return nullptr; // would overflow when aligning
+            }
+            bytes = (bytes + mask) & ~mask;
+        }
+
+        // Align absolute address (base + used_) to requested alignment (overflow-safe)
+        const auto base = reinterpret_cast<std::uintptr_t>(buffer_);
+        const std::size_t used = used_;
+        const auto maxp = (std::numeric_limits<std::uintptr_t>::max)();
+        if (static_cast<std::uintptr_t>(used) > maxp - base) {
+            return nullptr; // would overflow computing current address
+        }
+        std::uintptr_t addr = base + static_cast<std::uintptr_t>(used);
+        if (addr > maxp - mask) {
+            return nullptr; // would overflow when aligning address
+        }
+        const std::uintptr_t aligned_addr = (addr + mask) & ~static_cast<std::uintptr_t>(mask);
+        const std::size_t offset = static_cast<std::size_t>(aligned_addr - base);
+
+        // Exhaustion check using subtraction to avoid overflow
+        if (offset > size_) {
+            return nullptr; // defensive: out-of-range offset
+        }
+        const std::size_t remaining = size_ - offset;
+        if (bytes > remaining) {
+            return nullptr; // Arena exhausted or would overflow used_
+        }
+
         used_ = offset + bytes;
         return buffer_ + offset;
     }
-    
+
     /** \brief Reset arena for reuse. */
     auto reset() noexcept -> void {
         used_ = 0;
     }
-    
+
     /** \brief Get bytes used. */
-    [[nodiscard]] auto used() const noexcept -> std::size_t { 
-        return used_; 
+    [[nodiscard]] auto used() const noexcept -> std::size_t {
+        return used_;
     }
-    
+
     /** \brief Get bytes available. */
-    [[nodiscard]] auto available() const noexcept -> std::size_t { 
-        return size_ - used_; 
+    [[nodiscard]] auto available() const noexcept -> std::size_t {
+        return size_ - used_;
     }
-    
+
     /** \brief Get total size. */
-    [[nodiscard]] auto size() const noexcept -> std::size_t { 
-        return size_; 
+    [[nodiscard]] auto size() const noexcept -> std::size_t {
+        return size_;
     }
-    
+
 private:
-    static constexpr auto align_up(std::size_t n, std::size_t alignment) noexcept 
+    static constexpr auto align_up(std::size_t n, std::size_t alignment) noexcept
         -> std::size_t {
         return (n + alignment - 1) & ~(alignment - 1);
     }
-    
+
     std::uint8_t* buffer_;
     std::size_t size_;
     std::size_t used_;
@@ -109,7 +150,7 @@ class ArenaResource : public std::pmr::memory_resource {
 public:
     explicit ArenaResource(MemoryArena* arena)
         : arena_(arena) {}
-    
+
 protected:
     auto do_allocate(std::size_t bytes, std::size_t alignment) -> void* override {
         void* ptr = arena_->allocate(bytes, alignment);
@@ -118,17 +159,17 @@ protected:
         }
         return ptr;
     }
-    
-    auto do_deallocate(void* /* ptr */, std::size_t /* bytes */, 
+
+    auto do_deallocate(void* /* ptr */, std::size_t /* bytes */,
                       std::size_t /* alignment */) -> void override {
         // No-op: arena doesn't support individual deallocation
     }
-    
-    auto do_is_equal(const std::pmr::memory_resource& other) const noexcept 
+
+    auto do_is_equal(const std::pmr::memory_resource& other) const noexcept
         -> bool override {
         return this == &other;
     }
-    
+
 private:
     MemoryArena* arena_;
 };
@@ -144,61 +185,61 @@ public:
         thread_local ThreadLocalPool pool;
         return pool;
     }
-    
+
     /** \brief Get PMR allocator for current thread. */
     [[nodiscard]] auto allocator() -> std::pmr::polymorphic_allocator<std::byte> {
         return std::pmr::polymorphic_allocator<std::byte>(&resource_);
     }
-    
+
     /** \brief Allocate memory. */
-    [[nodiscard]] auto allocate(std::size_t bytes, 
+    [[nodiscard]] auto allocate(std::size_t bytes,
                                 std::size_t alignment = 64) -> void* {
         return arena_.allocate(bytes, alignment);
     }
-    
+
     /** \brief Reset pool (deallocate all). */
     auto reset() -> void {
         arena_.reset();
     }
-    
+
     /** \brief Get usage statistics. */
     struct Stats {
         std::size_t bytes_used;
         std::size_t bytes_total;
         float usage_ratio;
     };
-    
+
     [[nodiscard]] auto stats() const -> Stats {
         return Stats{
             .bytes_used = arena_.used(),
             .bytes_total = arena_.size(),
-            .usage_ratio = static_cast<float>(arena_.used()) / 
+            .usage_ratio = static_cast<float>(arena_.used()) /
                           static_cast<float>(arena_.size())
         };
     }
-    
+
 private:
-    ThreadLocalPool() 
+    ThreadLocalPool()
         : arena_(MemoryArena::DEFAULT_SIZE)
         , resource_(&arena_) {
         register_thread();
     }
-    
+
     ~ThreadLocalPool() {
         unregister_thread();
     }
-    
+
     auto register_thread() -> void {
         active_threads_.fetch_add(1, std::memory_order_relaxed);
     }
-    
+
     auto unregister_thread() -> void {
         active_threads_.fetch_sub(1, std::memory_order_relaxed);
     }
-    
+
     MemoryArena arena_;
     ArenaResource resource_;
-    
+
     inline static std::atomic<std::uint32_t> active_threads_{0};
 };
 
@@ -206,19 +247,19 @@ private:
 class PoolScope {
 public:
     PoolScope() : pool_(ThreadLocalPool::instance()) {}
-    
+
     ~PoolScope() {
         pool_.reset();
     }
-    
+
     PoolScope(const PoolScope&) = delete;
     PoolScope& operator=(const PoolScope&) = delete;
-    
+
     /** \brief Get allocator for this scope. */
     [[nodiscard]] auto allocator() -> std::pmr::polymorphic_allocator<std::byte> {
         return pool_.allocator();
     }
-    
+
 private:
     ThreadLocalPool& pool_;
 };
@@ -250,29 +291,29 @@ public:
             throw std::bad_alloc();
         }
     }
-    
+
     ~TempBuffer() = default;
-    
+
     TempBuffer(const TempBuffer&) = delete;
     TempBuffer& operator=(const TempBuffer&) = delete;
-    
+
     [[nodiscard]] auto data() noexcept -> T* { return ptr_; }
     [[nodiscard]] auto data() const noexcept -> const T* { return ptr_; }
     [[nodiscard]] auto size() const noexcept -> std::size_t { return size_; }
-    
+
     [[nodiscard]] auto operator[](std::size_t i) noexcept -> T& {
         return ptr_[i];
     }
-    
+
     [[nodiscard]] auto operator[](std::size_t i) const noexcept -> const T& {
         return ptr_[i];
     }
-    
+
     [[nodiscard]] auto begin() noexcept -> T* { return ptr_; }
     [[nodiscard]] auto end() noexcept -> T* { return ptr_ + size_; }
     [[nodiscard]] auto begin() const noexcept -> const T* { return ptr_; }
     [[nodiscard]] auto end() const noexcept -> const T* { return ptr_ + size_; }
-    
+
 private:
     ThreadLocalPool& pool_;
     T* ptr_;
