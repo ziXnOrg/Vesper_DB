@@ -136,11 +136,12 @@
 
 ### include/vesper/index/capq.hpp
 
-- [ ] High: Const-correctness breach — const view exposes mutable spans
-  - Location: `make_view() const` (≈197–205); `CapqSoAView` fields are `std::span<std::uint64_t>` and `std::span<std::uint8_t>`
-  - Details: The const overload constructs a `CapqSoAView` with mutable spans via `const_cast`, allowing mutation through a const reference. This violates const-correctness and can enable accidental writes in read-only contexts, undermining thread-safety assumptions.
-  - Web validation: C++ Core Guidelines (Const-correctness); `std::span<const T>` should be used for read-only views.
-  - Recommendation: Introduce a `CapqSoAViewConst` with `std::span<const std::uint64_t>` and `std::span<const std::uint8_t>` (or templatize `CapqSoAView<T>`); have `make_view() const` return the const-view type. Remove `const_cast` and ensure the API enforces read-only access from const.
+- [x] High: Const-correctness breach — const view exposes mutable spans — RESOLVED (2025-10-30, Task 22)
+  - Resolution: Introduced CapqSoAViewConst with std::span<const T> fields; updated CapqSoAStorage::view() const/make_view() const to return CapqSoAViewConst and removed const_cast; added validate_capq_view(const CapqSoAViewConst&); updated CGF bridge to accept/store a const view (back-compat overload) to avoid mutability through const.
+  - Location: include/vesper/index/capq.hpp (view()/make_view() const); include/vesper/index/cgf_capq_bridge.hpp (CapqFilter::initialize)
+  - Tests: tests/unit/capq_const_view_test.cpp; local run of vesper_tests "[capq]" passed
+  - PR: #66 (feat/task22-capq-const-view)
+  - Date resolved: 2025-10-30
 - [ ] Medium: bytes_per_vector_* ignore 384-bit configuration
   - Location: `CapqSoAView::bytes_per_vector_payload()`/`bytes_per_vector_total()` (≈97–105)
   - Details: Functions return 128 and 129 bytes respectively regardless of `CapqHammingBits` (`B256` vs `B384`). For 384-bit configuration, payload should be 144 bytes and total 145 bytes. Current constants can lead to buffer mis-sizing and unsafe copies if used by callers.
