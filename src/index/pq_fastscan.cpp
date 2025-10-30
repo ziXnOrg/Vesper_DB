@@ -100,6 +100,9 @@ auto FastScanPq::find_nearest_code(const float* vec, std::uint32_t sub_idx) cons
 
 auto FastScanPq::encode(const float* data, std::size_t n,
                        std::uint8_t* codes) const -> void {
+#ifndef NDEBUG
+    assert(trained_ && codebooks_ && dsub_ > 0 && "FastScanPq must be trained before encode");
+#endif
     #pragma omp parallel for
     for (int i_i = 0; i_i < static_cast<int>(n); ++i_i) {
         const float* vec = data + static_cast<std::size_t>(i_i) * config_.m * dsub_;
@@ -131,6 +134,8 @@ auto FastScanPq::encode_blocks(const float* data, std::size_t n)
             block.add_code(all_codes.data() + j * config_.m);
         }
 
+
+
         blocks.push_back(std::move(block));
     }
 
@@ -139,6 +144,9 @@ auto FastScanPq::encode_blocks(const float* data, std::size_t n)
 
 auto FastScanPq::compute_lookup_tables(const float* query) const
     -> AlignedCentroidBuffer {
+#ifndef NDEBUG
+    assert(trained_ && codebooks_ && dsub_ > 0 && "FastScanPq must be trained before compute_lookup_tables");
+#endif
     AlignedCentroidBuffer luts(config_.m, ksub_);
 
     const auto& ops = kernels::select_backend_auto();
@@ -148,6 +156,8 @@ auto FastScanPq::compute_lookup_tables(const float* query) const
         const float* query_sub = query + static_cast<std::size_t>(sub_i) * dsub_;
         const std::uint32_t sub = static_cast<std::uint32_t>(sub_i);
         float* lut = luts[sub];
+
+
 
         for (std::uint32_t code = 0; code < ksub_; ++code) {
             const std::uint32_t idx = sub * ksub_ + code;
@@ -175,16 +185,13 @@ auto FastScanPq::compute_distances(const float* query,
     for (std::uint32_t sub = 0; sub < config_.m; ++sub) {
         const float* lut = luts[sub];
         std::size_t offset = 0;
-
         for (const auto& block : blocks) {
             const std::uint8_t* codes = block.get_subquantizer_codes(sub);
             const std::uint32_t n_codes = block.size();
-
             // Accumulate distances from lookup table
             for (std::uint32_t i = 0; i < n_codes; ++i) {
                 distances[offset + i] += lut[codes[i]];
             }
-
             offset += config_.block_size;
         }
     }
@@ -281,6 +288,9 @@ auto FastScanPq::compute_distances_avx512(const float* query,
 
 
 auto FastScanPq::decode(const std::uint8_t* codes, std::size_t n, float* data) const -> void {
+#ifndef NDEBUG
+    assert(trained_ && codebooks_ && dsub_ > 0 && "FastScanPq must be trained before decode");
+#endif
     const std::size_t dim = config_.m * dsub_;
     #pragma omp parallel for
     for (int i_i = 0; i_i < static_cast<int>(n); ++i_i) {
@@ -318,6 +328,40 @@ auto FastScanPq::import_pretrained(std::size_t dsub, std::span<const float> data
         }
     }
     trained_ = true;
+}
+
+
+// Checked variants (precondition validation)
+auto FastScanPq::decode_checked(const std::uint8_t* codes, std::size_t n, float* data) const
+    -> std::expected<void, core::error> {
+    using core::error; using core::error_code;
+    if (!trained_ || !codebooks_ || dsub_ == 0) {
+        return std::vesper_unexpected(error{ error_code::precondition_failed,
+            "FastScanPq must be trained before decode()", "pq_fastscan" });
+    }
+    decode(codes, n, data);
+    return {};
+}
+
+auto FastScanPq::compute_lookup_tables_checked(const float* query) const
+    -> std::expected<AlignedCentroidBuffer, core::error> {
+    using core::error; using core::error_code;
+    if (!trained_ || !codebooks_ || dsub_ == 0) {
+        return std::vesper_unexpected(error{ error_code::precondition_failed,
+            "FastScanPq must be trained before compute_lookup_tables()", "pq_fastscan" });
+    }
+    return compute_lookup_tables(query);
+}
+
+auto FastScanPq::encode_checked(const float* data, std::size_t n, std::uint8_t* codes) const
+    -> std::expected<void, core::error> {
+    using core::error; using core::error_code;
+    if (!trained_ || !codebooks_ || dsub_ == 0) {
+        return std::vesper_unexpected(error{ error_code::precondition_failed,
+            "FastScanPq must be trained before encode()", "pq_fastscan" });
+    }
+    encode(data, n, codes);
+    return {};
 }
 
 } // namespace vesper::index

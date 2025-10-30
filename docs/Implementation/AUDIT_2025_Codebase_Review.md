@@ -74,10 +74,11 @@
   - **Recommendation**: Propagate errors via std::expected from train_subquantizer() and aggregate in train(); document possible error codes in header.
   - **Resolution**: Implemented error propagation via std::expected from train_subquantizer(); train() aggregates subquantizer errors and returns first failure; added precondition guard n < ksub → precondition_failed; set trained_=true only on full success; updated Doxygen to enumerate error codes; added unit tests: tests/unit/pq_fastscan_training_error_test.cpp.
 
-- [ ] High: encode/decode/compute_lookup_tables require trained state; not validated
-  - **Location**: encode()/decode()/compute_lookup_tables declarations (128–176); implementations use codebooks_ without trained_ check (src/index/pq_fastscan.cpp 97–109, 279–291, 136–157)
-  - **Details**: Calling before train/import_pretrained may dereference null codebooks_.
-  - **Recommendation**: Document precondition “must be trained”. In Phase 2, add runtime guards and return errors (or asserts in non-API hot paths).
+- [x] High: encode/decode/compute_lookup_tables require trained state — RESOLVED (2025-10-30, Task 21)
+  - Resolution: Added checked variants `encode_checked`/`decode_checked`/`compute_lookup_tables_checked` returning `std::expected` with `precondition_failed` on untrained usage. Documented \pre and contracts on fast methods; added a debug-only assert in `encode()`.
+  - Location: include/vesper/index/pq_fastscan.hpp; src/index/pq_fastscan.cpp
+  - Tests: `tests/unit/pq_fastscan_preconditions_test.cpp` — untrained calls fail; trained and import_pretrained paths succeed.
+  - ABI/Perf: Additive API only; existing fast paths unchanged; zero runtime overhead in release for fast methods.
 
 - [x] High: compute_batch_distances buffer sizing and empty-block handling — RESOLVED (2025-10-29)
   - **Location**: inline compute_batch_distances() (270–284)
