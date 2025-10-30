@@ -124,8 +124,25 @@ public:
      * \param data Vectors to encode [n x dim]
      * \param n Number of vectors
      * \param[out] codes Output codes [n x m]
+     * \pre Quantizer is trained via train() or import_pretrained(); codebooks_ non-null; dsub_ > 0
+     * \thread_safety Reentrant; safe for concurrent calls when trained
+     * \complexity O(n * m * ksub * dsub)
+     * \see train(), import_pretrained(), is_trained(), encode_checked()
      */
     auto encode(const float* data, std::size_t n, std::uint8_t* codes) const -> void;
+
+    /** \brief Encode vectors into PQ codes with precondition validation.
+     *
+     * \param data Vectors to encode [n x dim]
+     * \param n Number of vectors
+     * \param[out] codes Output codes [n x m]
+     * \return Success or error (precondition_failed if untrained)
+     * \thread_safety Reentrant; safe for concurrent calls when trained
+     * \complexity O(n * m * ksub * dsub)
+     * \see encode(), train(), import_pretrained(), is_trained()
+     */
+    auto encode_checked(const float* data, std::size_t n, std::uint8_t* codes) const
+        -> std::expected<void, core::error>;
 
     /** \brief Encode vectors into blocks.
      *
@@ -141,8 +158,25 @@ public:
      * \param codes PQ codes [n x m]
      * \param n Number of codes
      * \param[out] data Output vectors [n x dim]
+     * \pre Quantizer is trained via train() or import_pretrained(); codebooks_ non-null; dsub_ > 0
+     * \thread_safety Reentrant; safe for concurrent calls when trained
+     * \complexity O(n * m * dsub)
+     * \see train(), import_pretrained(), is_trained(), decode_checked()
      */
     auto decode(const std::uint8_t* codes, std::size_t n, float* data) const -> void;
+
+    /** \brief Decode PQ codes back to vectors with precondition validation.
+     *
+     * \param codes PQ codes [n x m]
+     * \param n Number of codes
+     * \param[out] data Output vectors [n x dim]
+     * \return Success or error (precondition_failed if untrained)
+     * \thread_safety Reentrant; safe for concurrent calls when trained
+     * \complexity O(n * m * dsub)
+     * \see decode(), train(), import_pretrained(), is_trained()
+     */
+    auto decode_checked(const std::uint8_t* codes, std::size_t n, float* data) const
+        -> std::expected<void, core::error>;
 
     /** \brief Compute distances using lookup tables (ADC).
      *
@@ -175,9 +209,24 @@ public:
      *
      * \param query Query vector [dim]
      * \return Lookup tables [m x ksub]
+     * \pre Quantizer is trained via train() or import_pretrained(); codebooks_ non-null; dsub_ > 0
+     * \thread_safety Reentrant; safe for concurrent calls when trained
+     * \complexity O(m * ksub * dsub)
+     * \see train(), import_pretrained(), is_trained(), compute_lookup_tables_checked()
      */
     auto compute_lookup_tables(const float* query) const
         -> AlignedCentroidBuffer;
+
+    /** \brief Precompute lookup tables with precondition validation.
+     *
+     * \param query Query vector [dim]
+     * \return Success with lookup tables or error (precondition_failed if untrained)
+     * \thread_safety Reentrant; safe for concurrent calls when trained
+     * \complexity O(m * ksub * dsub)
+     * \see compute_lookup_tables(), train(), import_pretrained(), is_trained()
+     */
+    auto compute_lookup_tables_checked(const float* query) const
+        -> std::expected<AlignedCentroidBuffer, core::error>;
 
     /** \brief Get configuration. */
     [[nodiscard]] auto config() const noexcept -> const FastScanPqConfig& {
