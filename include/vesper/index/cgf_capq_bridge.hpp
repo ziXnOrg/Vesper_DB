@@ -27,7 +27,8 @@ class CapqFilter {
 public:
   CapqFilter() = default;
 
-  void initialize(const CapqSoAView& storage_view,
+  // Initialize with a read-only CAPQ view (preferred)
+  void initialize(const CapqSoAViewConst& storage_view,
                   const CapqWhiteningModel& whitening_model,
                   const CapqQ8Params& q8_params,
                   const std::array<std::uint64_t, 6>& seeds,
@@ -37,6 +38,22 @@ public:
     q8_params_ = q8_params;
     seeds_ = seeds;
     hbits_ = hbits;
+  }
+  // Backward-compatible overload: accept mutable view and convert to const
+  void initialize(const CapqSoAView& storage_view,
+                  const CapqWhiteningModel& whitening_model,
+                  const CapqQ8Params& q8_params,
+                  const std::array<std::uint64_t, 6>& seeds,
+                  CapqHammingBits hbits) {
+    CapqSoAViewConst v{};
+    v.num_vectors = storage_view.num_vectors;
+    v.dimension = storage_view.dimension;
+    v.hbits = storage_view.hbits;
+    v.hamming_words = std::span<const std::uint64_t>(storage_view.hamming_words.data(), storage_view.hamming_words.size());
+    v.q4_packed = std::span<const std::uint8_t>(storage_view.q4_packed.data(), storage_view.q4_packed.size());
+    v.q8 = std::span<const std::int8_t>(storage_view.q8.data(), storage_view.q8.size());
+    v.residual_energy = std::span<const std::uint8_t>(storage_view.residual_energy.data(), storage_view.residual_energy.size());
+    initialize(v, whitening_model, q8_params, seeds, hbits);
   }
 
   /** \brief Search candidates using CAPQ three-stage cascade; returns top-k ids. */
@@ -96,7 +113,7 @@ public:
   }
 
 private:
-  CapqSoAView storage_view_{};
+  CapqSoAViewConst storage_view_{};
   CapqWhiteningModel whitening_model_{};
   CapqQ8Params q8_params_{};
   std::array<std::uint64_t, 6> seeds_{};

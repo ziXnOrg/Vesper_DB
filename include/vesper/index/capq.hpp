@@ -71,7 +71,7 @@ struct CapqBuildParams {
   bool enable_q4_coarsen{true};            // q4 = q8 >> 4
 };
 
-/** \brief Non-owning SoA view over CAPQ payload arrays. */
+/** \brief Non-owning SoA view over CAPQ payload arrays (mutable). */
 struct CapqSoAView {
   std::size_t num_vectors{0};           /**< number of vectors in this view */
   std::size_t dimension{64};            /**< logical dimension after projection */
@@ -133,6 +133,31 @@ struct CapqSoAView {
   }
 };
 
+/** \brief Non-owning SoA view over CAPQ payload arrays (read-only).\n *  \thread_safety Safe for concurrent readers; no mutation permitted. */
+struct CapqSoAViewConst {
+  std::size_t num_vectors{0};
+  std::size_t dimension{64};
+  CapqHammingBits hbits{CapqHammingBits::B256};
+
+  std::span<const std::uint64_t> hamming_words;
+  std::span<const std::uint8_t>  q4_packed;
+  std::span<const std::int8_t>   q8;
+  std::span<const std::uint8_t>  residual_energy;
+
+  [[nodiscard]] constexpr std::size_t words_per_vector() const noexcept {
+    return (hbits == CapqHammingBits::B256) ? 4u : 6u;
+  }
+  [[nodiscard]] constexpr std::size_t bytes_per_vector_payload() const noexcept { return 128u; }
+  [[nodiscard]] constexpr std::size_t bytes_per_vector_total() const noexcept { return 129u; }
+
+  [[nodiscard]] inline const std::uint64_t* hamming_ptr(std::size_t i) const noexcept {
+    return hamming_words.data() + i * words_per_vector();
+  }
+  [[nodiscard]] inline const std::uint8_t* q4_ptr(std::size_t i) const noexcept { return q4_packed.data() + i * 32u; }
+  [[nodiscard]] inline const std::int8_t*  q8_ptr(std::size_t i) const noexcept { return q8.data() + i * 64u; }
+  [[nodiscard]] inline const std::uint8_t* residual_ptr(std::size_t i) const noexcept { return residual_energy.data() + i; }
+};
+
 /** \brief Owning SoA storage for CAPQ payloads. */
 class CapqSoAStorage {
 public:
@@ -154,7 +179,8 @@ public:
   [[nodiscard]] CapqSoAView view() noexcept {
     return make_view();
   }
-  [[nodiscard]] CapqSoAView view() const noexcept {
+  /** \brief Return a read-only view over the storage (const access).\n   *  \thread_safety Safe for concurrent reads when no writer holds a mutable view.\n   */
+  [[nodiscard]] CapqSoAViewConst view() const noexcept {
     return make_view();
   }
 
@@ -194,15 +220,15 @@ private:
     v.residual_energy = std::span<std::uint8_t>(residual_energy_.data(), residual_energy_.size());
     return v;
   }
-  [[nodiscard]] CapqSoAView make_view() const noexcept {
-    CapqSoAView v;
+  [[nodiscard]] CapqSoAViewConst make_view() const noexcept {
+    CapqSoAViewConst v;
     v.num_vectors = num_vectors_;
     v.dimension = 64u;
     v.hbits = hbits_;
-    v.hamming_words = std::span<std::uint64_t>(const_cast<std::uint64_t*>(hamming_words_.data()), hamming_words_.size());
-    v.q4_packed = std::span<std::uint8_t>(const_cast<std::uint8_t*>(q4_packed_.data()), q4_packed_.size());
-    v.q8 = std::span<std::int8_t>(const_cast<std::int8_t*>(q8_.data()), q8_.size());
-    v.residual_energy = std::span<std::uint8_t>(const_cast<std::uint8_t*>(residual_energy_.data()), residual_energy_.size());
+    v.hamming_words = std::span<const std::uint64_t>(hamming_words_.data(), hamming_words_.size());
+    v.q4_packed = std::span<const std::uint8_t>(q4_packed_.data(), q4_packed_.size());
+    v.q8 = std::span<const std::int8_t>(q8_.data(), q8_.size());
+    v.residual_energy = std::span<const std::uint8_t>(residual_energy_.data(), residual_energy_.size());
     return v;
   }
 };
@@ -233,6 +259,37 @@ inline auto validate_capq_view(const CapqSoAView& v) -> std::expected<void, core
   if (v.residual_energy.size() != expected_res) {
     return std::vesper_unexpected(core::error{core::error_code::precondition_failed,
                                        "CAPQ view: invalid residual_energy size",
+                                       "index.capq"});
+  }
+  return {};
+}
+
+/** \brief Validate that a const SoA view has consistent sizes for the configured Hamming width. */
+inline auto validate_capq_view(const CapqSoAViewConst& v) -> std::expected<void, core::error> {
+  const std::size_t wpv = (v.hbits == CapqHammingBits::B256) ? 4u : 6u;
+  const std::size_t expected_hamming = v.num_vectors * wpv;
+  const std::size_t expected_q4 = v.num_vectors * 32u;
+  const std::size_t expected_q8 = v.num_vectors * 64u;
+  const std::size_t expected_res = v.num_vectors;
+
+  if (v.hamming_words.size() != expected_hamming) {
+    return std::vesper_unexpected(core::error{core::error_code::precondition_failed,
+                                       "CAPQ const view: invalid hamming_words size",
+                                       "index.capq"});
+  }
+  if (v.q4_packed.size() != expected_q4) {
+    return std::vesper_unexpected(core::error{core::error_code::precondition_failed,
+                                       "CAPQ const view: invalid q4_packed size",
+                                       "index.capq"});
+  }
+  if (v.q8.size() != expected_q8) {
+    return std::vesper_unexpected(core::error{core::error_code::precondition_failed,
+                                       "CAPQ const view: invalid q8 size",
+                                       "index.capq"});
+  }
+  if (v.residual_energy.size() != expected_res) {
+    return std::vesper_unexpected(core::error{core::error_code::precondition_failed,
+                                       "CAPQ const view: invalid residual_energy size",
                                        "index.capq"});
   }
   return {};
