@@ -68,17 +68,17 @@
 
 ### include/vesper/index/pq_fastscan.hpp
 
-- [ ] High: Training error propagation missing (silent success)
+- [x] High: Training error propagation missing (silent success) — RESOLVED
   - **Location**: train_subquantizer() returns void; train() ignores failures (src/index/pq_fastscan.cpp 62–71; 12–40)
   - **Details**: If k-means fails, codebook entries remain default-initialized but train() still returns success. Leads to degraded accuracy and undefined behavior in downstream SIMD paths.
   - **Recommendation**: Propagate errors via std::expected from train_subquantizer() and aggregate in train(); document possible error codes in header.
+  - **Resolution**: Implemented error propagation via std::expected from train_subquantizer(); train() aggregates subquantizer errors and returns first failure; added precondition guard n < ksub → precondition_failed; set trained_=true only on full success; updated Doxygen to enumerate error codes; added unit tests: tests/unit/pq_fastscan_training_error_test.cpp.
 
 - [x] High: encode/decode/compute_lookup_tables require trained state — RESOLVED (2025-10-30, Task 21)
   - Resolution: Added checked variants `encode_checked`/`decode_checked`/`compute_lookup_tables_checked` returning `std::expected` with `precondition_failed` on untrained usage. Documented \pre and contracts on fast methods; added a debug-only assert in `encode()`.
   - Location: include/vesper/index/pq_fastscan.hpp; src/index/pq_fastscan.cpp
   - Tests: `tests/unit/pq_fastscan_preconditions_test.cpp` — untrained calls fail; trained and import_pretrained paths succeed.
   - ABI/Perf: Additive API only; existing fast paths unchanged; zero runtime overhead in release for fast methods.
-
 
 - [x] High: compute_batch_distances buffer sizing and empty-block handling — RESOLVED (2025-10-29)
   - **Location**: inline compute_batch_distances() (270–284)
@@ -88,10 +88,12 @@
   - **Tests**: Added `tests/unit/pq_fastscan_batch_distances_layout_test.cpp` covering empty blocks, partial single block, and multi-block partial tail with multi-query stride verification.
   - **Validation**: Ninja+MSVC Debug build succeeded; targeted tests passed (137 assertions in 3 test cases, filter [pq][fastscan][batch]); full suite passed (8507 assertions in 188 test cases); zero new warnings.
 
-- [ ] High: ABI stability — public API exposes STL containers and std::span
-  - **Location**: encode_blocks() returns std::vector<PqCodeBlock> (136–138); compute_distances() takes std::vector<PqCodeBlock> (153–155); import_pretrained() takes std::span (202)
+- [x] High: ABI stability — public API exposes STL containers and std::span — RESOLVED (2025-10-29)
+  - **Location**: encode_blocks() returns std::vector<PqCodeBlock> (~138–145); compute_distances() takes std::vector<PqCodeBlock> (~164–166); import_pretrained() takes std::span (~213)
   - **Details**: These types aren’t ABI-stable across DSOs/toolchains.
   - **Recommendation**: Document ABI boundary; recommend C API for cross-DSO use.
+  - **Resolution**: Added header-level ABI note in include/vesper/index/pq_fastscan.hpp; added per-function ABI notes for encode_blocks(), compute_distances() (and AVX2/AVX-512 variants), and import_pretrained(); referenced the stable C API (include/vesper/c/, docs/C_API_Reference.md). Documentation-only change; no behavioral modifications.
+  - **Validation**: Ninja+MSVC Debug build succeeded; no new warnings introduced.
 
 - [ ] Medium: Parameter validation incomplete
   - **Location**: train() (119–121), FastScanPqConfig (34–39)
@@ -370,7 +372,7 @@
 
 ## Summary (updated)
 - Total files reviewed (this pass): 23
-- High-priority issues: 6
+- High-priority issues: 4
 - Medium-priority issues: 63
 - Low-priority issues: 35
 
