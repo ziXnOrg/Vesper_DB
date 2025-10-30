@@ -14,6 +14,14 @@
  *
  * Performance: 2-4x faster than standard PQ on modern CPUs.
  */
+/**
+ * ABI note: The public C++ API in this header uses STL types (e.g., std::vector<PqCodeBlock>)
+ * and std::span in function signatures. These are not guaranteed ABI-stable across compilers,
+ * standard libraries, or CRT/ABI versions. The C++ API is intended for in-process use with the
+ * same toolchain. For cross-DSO or FFI/plugin boundaries, prefer the stable C API under
+ * include/vesper/c/ (see docs/C_API_Reference.md).
+ */
+
 
 #include <cstdint>
 #include <memory>
@@ -115,6 +123,9 @@ public:
      * \param n Number of training vectors
      * \param dim Vector dimensionality
      * \return Success or error
+     *
+     * Preconditions: dim divisible by m; n >= ksub (2^nbits).
+     * Errors: precondition_failed (invalid dim or insufficient n); internal (k-means failure).
      */
     auto train(const float* data, std::size_t n, std::size_t dim)
         -> std::expected<void, core::error>;
@@ -131,24 +142,16 @@ public:
      */
     auto encode(const float* data, std::size_t n, std::uint8_t* codes) const -> void;
 
-    /** \brief Encode vectors into PQ codes with precondition validation.
-     *
-     * \param data Vectors to encode [n x dim]
-     * \param n Number of vectors
-     * \param[out] codes Output codes [n x m]
-     * \return Success or error (precondition_failed if untrained)
-     * \thread_safety Reentrant; safe for concurrent calls when trained
-     * \complexity O(n * m * ksub * dsub)
-     * \see encode(), train(), import_pretrained(), is_trained()
-     */
-    auto encode_checked(const float* data, std::size_t n, std::uint8_t* codes) const
-        -> std::expected<void, core::error>;
-
     /** \brief Encode vectors into blocks.
      *
      * \param data Vectors to encode [n x dim]
      * \param n Number of vectors
      * \return Vector of code blocks
+     *
+     * ABI note: Returns std::vector<PqCodeBlock>, which is not guaranteed ABI-stable
+     * across compilers/standard libraries/CRT versions. See the header-level ABI note
+     * above; for cross-DSO/FFI boundaries, use the stable C API (include/vesper/c/;
+     * see docs/C_API_Reference.md).
      */
     auto encode_blocks(const float* data, std::size_t n)
         -> std::vector<PqCodeBlock>;
@@ -165,19 +168,6 @@ public:
      */
     auto decode(const std::uint8_t* codes, std::size_t n, float* data) const -> void;
 
-    /** \brief Decode PQ codes back to vectors with precondition validation.
-     *
-     * \param codes PQ codes [n x m]
-     * \param n Number of codes
-     * \param[out] data Output vectors [n x dim]
-     * \return Success or error (precondition_failed if untrained)
-     * \thread_safety Reentrant; safe for concurrent calls when trained
-     * \complexity O(n * m * dsub)
-     * \see decode(), train(), import_pretrained(), is_trained()
-     */
-    auto decode_checked(const std::uint8_t* codes, std::size_t n, float* data) const
-        -> std::expected<void, core::error>;
-
     /** \brief Compute distances using lookup tables (ADC).
      *
      * \param query Query vector [dim]
@@ -186,19 +176,31 @@ public:
      * \details Output layout: total_codes = blocks.size() * config.block_size. For each block b,
      *          only the first blocks[b].size() entries are valid; the remainder of the block's
      *          stride are padding. Callers must not consume padding entries.
+     *
+     * ABI note: Accepts std::vector<PqCodeBlock>; not guaranteed ABI-stable across
+     * compilers/standard libraries/CRT versions. See header-level ABI guidance; for
+     * cross-DSO/FFI, use the stable C API (include/vesper/c/; docs/C_API_Reference.md).
      */
     auto compute_distances(const float* query,
                           const std::vector<PqCodeBlock>& blocks,
                           float* distances) const -> void;
 
-    /** \brief Compute distances with AVX2 acceleration. */
+    /** \brief Compute distances with AVX2 acceleration.
+     *  ABI note: Accepts std::vector<PqCodeBlock>; not ABI-stable across compilers/standard
+     *  libraries/CRT versions. See header-level ABI guidance; for cross-DSO/FFI, use the
+     *  stable C API (include/vesper/c/; docs/C_API_Reference.md).
+     */
     #ifdef __AVX2__
     auto compute_distances_avx2(const float* query,
                                const std::vector<PqCodeBlock>& blocks,
                                float* distances) const -> void;
     #endif
 
-    /** \brief Compute distances with AVX-512 acceleration. */
+    /** \brief Compute distances with AVX-512 acceleration.
+     *  ABI note: Accepts std::vector<PqCodeBlock>; not ABI-stable across compilers/standard
+     *  libraries/CRT versions. See header-level ABI guidance; for cross-DSO/FFI, use the
+     *  stable C API (include/vesper/c/; docs/C_API_Reference.md).
+     */
     #ifdef __AVX512F__
     auto compute_distances_avx512(const float* query,
                                  const std::vector<PqCodeBlock>& blocks,
@@ -250,7 +252,11 @@ public:
 
     /** \brief Export codebooks as a dense row-major array [m*ksub x dsub]. */
     auto export_codebooks(std::vector<float>& out) const -> void;
-    /** \brief Import pre-trained codebooks and mark as trained. */
+    /** \brief Import pre-trained codebooks and mark as trained.
+     *  ABI note: Takes std::span<const float>, which is not guaranteed ABI-stable across
+     *  compilers/standard libraries/CRT versions. See header-level ABI guidance; for
+     *  cross-DSO/FFI boundaries, use the stable C API (include/vesper/c/; docs/C_API_Reference.md).
+     */
     auto import_pretrained(std::size_t dsub, std::span<const float> data) -> void;
     /** \brief Get ksub (codes per subquantizer). */
     [[nodiscard]] auto ksub() const noexcept -> std::uint32_t { return ksub_; }
@@ -266,7 +272,7 @@ private:
 
     /** \brief Train a single subquantizer. */
     auto train_subquantizer(const float* data, std::size_t n,
-                           std::uint32_t sub_idx) -> void;
+                           std::uint32_t sub_idx) -> std::expected<void, core::error>;
 
     /** \brief Find nearest codebook entry. */
     auto find_nearest_code(const float* vec, std::uint32_t sub_idx) const

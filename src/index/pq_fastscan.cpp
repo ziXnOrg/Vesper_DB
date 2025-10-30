@@ -7,7 +7,8 @@
 #include <numeric>
 #include <cmath>
 
-#include <cassert>
+#include <atomic>
+#include <mutex>
 
 namespace vesper::index {
 
@@ -32,7 +33,8 @@ auto FastScanPq::train(const float* data, std::size_t n, std::size_t dim)
 
     // Train each subquantizer independently
     #pragma omp parallel for schedule(dynamic)
-    for (int sub_i = 0; sub_i < static_cast<int>(config_.m); ++sub_i) {
+    for (int sub_i = 0; sub_i < static_cast<int>(config_.m)
+    ; ++sub_i) {
         const std::uint32_t sub = static_cast<std::uint32_t>(sub_i);
         train_subquantizer(data, n, sub);
     }
