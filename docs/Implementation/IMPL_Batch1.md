@@ -100,4 +100,3 @@ Notes
 - Determinism relies on stable ordering from IndexManager::get_active_indexes()
 - safe_getenv() centralizes environment handling and is required by coding standards
 - The frozen flag is intentionally cached for thread-safety and to avoid per-call env reads
-

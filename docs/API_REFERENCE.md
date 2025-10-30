@@ -273,6 +273,49 @@ collection->configure_wal(wal_config);
 collection->checkpoint();
 ```
 
+#### WAL Manifest Utilities
+
+Vesper provides utilities to rebuild and validate the WAL manifest from on-disk WAL segment files. There are two explicit modes:
+
+- Strict rebuild (default): fail-fast on the first data-integrity violation; returns an error.
+- Lenient rebuild (best-effort): skip corrupt or invalid files/entries and return a partial manifest alongside structured issues.
+
+```cpp
+#include <vesper/wal/manifest.hpp>
+
+// Strict (fail-fast)
+if (auto m = wal::rebuild_manifest(dir)) {
+    wal::save_manifest(dir, *m);  // overwrite wal.manifest
+} else {
+    // Handle error: m.error().code == error_code::data_integrity, etc.
+}
+
+// Lenient (best-effort)
+if (auto r = wal::rebuild_manifest_lenient(dir)) {
+    // r->manifest contains only valid entries; r->issues documents skipped files/entries
+    wal::save_manifest(dir, r->manifest);
+    for (const auto& issue : r->issues) {
+        std::cout << "issue: file=" << issue.file << " seq=" << issue.seq << "\n";
+    }
+}
+
+// Validate manifest on disk (advisory). LSN gaps are warnings; invariants must hold.
+if (auto v = wal::validate_manifest(dir)) {
+    if (!v->ok) {
+        for (auto& is : v->issues) {
+            // Severity::Error indicates a non-conforming manifest
+        }
+    }
+}
+```
+
+API summary:
+- `auto wal::rebuild_manifest(const std::filesystem::path&) -> expected<Manifest, error>`
+- `auto wal::rebuild_manifest_lenient(const std::filesystem::path&) -> expected<LenientRebuildResult, error>`
+  - `struct LenientRebuildResult { Manifest manifest; std::vector<RebuildIssue> issues; }`
+  - `struct RebuildIssue { std::string file; std::uint64_t seq; error_code code; std::string message; /* optional LSN fields */ }`
+```
+
 ## Error Handling
 
 Vesper uses `std::expected` for error handling:

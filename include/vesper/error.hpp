@@ -11,6 +11,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vesper/expected_polyfill.hpp>
 
 namespace vesper::core {
 
@@ -32,6 +33,7 @@ enum class error_code : std::uint32_t {
   invalid_argument = 9002,
   not_initialized = 9003,
   out_of_range = 9004,
+  unsupported = 9005,
 };
 
 /** \brief Structured error payload accompanying an error_code. */

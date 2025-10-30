@@ -142,8 +142,8 @@ void projection_screen_select(const ProjScreenInputs& in, ProjScreenOutputs& out
             const std::size_t ntiles = (n / 16) * 16;
             // Temporary buffers reused per tile
             // Selection buffers
-            std::vector<int> idx_buf(jb);
-            std::vector<float> dist_buf(jb);
+            // Use per-row distance buffer sized [16 x jb]
+            std::vector<float> dist_buf16(jb * 16);
             for (std::size_t tile = 0; tile < ntiles; tile += 16) {
                 const std::size_t i0 = tile;
                 // Pack A-panel: Apack[k*16 + r] = qproj[(i0+r)*p + k]
@@ -178,16 +178,15 @@ void projection_screen_select(const ProjScreenInputs& in, ProjScreenOutputs& out
                     // Store dots to temporaries
                     float dots_top[8][8]; float dots_bot[8][8];
                     for (int j = 0; j < 8; ++j) { _mm256_storeu_ps(dots_top[j], Ctop[j]); _mm256_storeu_ps(dots_bot[j], Cbot[j]); }
-                    // Convert to distances and stash into per-row dist_buf
+                    // Convert to distances and stash into per-row buffer dist_buf16[r*jb + (cj - j0)]
                     for (int r = 0; r < 16; ++r) {
                         const std::size_t i = static_cast<std::size_t>(i0 + r);
                         if (i >= n) break;
-                        if (dist_buf.size() != jb) dist_buf.resize(jb);
                         for (int lane = 0; lane < 8; ++lane) {
                             const std::size_t cj = cjblk + static_cast<std::size_t>(lane);
                             if (cj < j0 || cj >= (j0 + jb) || cj >= C) continue;
                             const float dot = (r < 8 ? dots_top[lane][r] : dots_bot[lane][r - 8]);
-                            dist_buf[cj - j0] = qnorm16[r] + in.centroid_norms[cj] - 2.0f * dot;
+                            dist_buf16[static_cast<std::size_t>(r) * jb + (cj - j0)] = qnorm16[r] + in.centroid_norms[cj] - 2.0f * dot;
                         }
                     }
                 }
@@ -200,7 +199,7 @@ void projection_screen_select(const ProjScreenInputs& in, ProjScreenOutputs& out
                     float blk_dist[256];
                     std::size_t bsz = 0; int argmax = -1; float maxd = -std::numeric_limits<float>::infinity();
                     for (std::size_t jj = 0; jj < jb; ++jj) {
-                        const float d = dist_buf[jj];
+                        const float d = dist_buf16[static_cast<std::size_t>(r) * jb + jj];
                         if (bsz < T) {
                             blk_idx[bsz] = static_cast<std::uint32_t>(j0 + jj);
                             blk_dist[bsz] = d;
@@ -240,19 +239,20 @@ void projection_screen_select(const ProjScreenInputs& in, ProjScreenOutputs& out
                     for (std::size_t i = ntiles; i < n; ++i) {
                         // Compute distances for this block j0..j0+jb for row i (scalar dot over p=16)
                         const float qi = in.qnorm[i];
+                        std::vector<float> dist1(jb);
                         for (std::size_t jj = 0; jj < jb; ++jj) {
                             const std::size_t cj = j0 + jj;
                             const float* yc = in.centroids_rm + cj * p;
                             const float* qp = in.qproj + i * p;
                             float dot = 0.0f; for (int k = 0; k < 16; ++k) dot += qp[k] * yc[k];
-                            dist_buf[jj] = qi + in.centroid_norms[cj] - 2.0f * dot;
+                            dist1[jj] = qi + in.centroid_norms[cj] - 2.0f * dot;
                         }
                         // Select top-T for this block and merge into running top-L
                         std::uint32_t blk_idx[256];
                         float blk_dist[256];
                         std::size_t bsz = 0; int argmax = -1; float maxd = -std::numeric_limits<float>::infinity();
                         for (std::size_t jj = 0; jj < jb; ++jj) {
-                            const float d = dist_buf[jj];
+                            const float d = dist1[jj];
                             if (bsz < T) {
                                 blk_idx[bsz] = static_cast<std::uint32_t>(j0 + jj);
                                 blk_dist[bsz] = d;

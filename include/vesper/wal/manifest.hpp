@@ -10,6 +10,8 @@
 
 #include <cstdint>
 #include <expected>
+#include <optional>
+
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -36,12 +38,41 @@ auto load_manifest(const std::filesystem::path& dir)
 auto save_manifest(const std::filesystem::path& dir, const Manifest& m)
     -> std::expected<void, vesper::core::error>;
 
-// Rebuild a manifest by scanning wal-*.log files in the directory (sorted by sequence)
+
+// Atomically save manifest: write temp -> fsync -> atomic replace -> fsync parent dir (best-effort per platform)
+auto save_manifest_atomic(const std::filesystem::path& dir, const Manifest& m)
+    -> std::expected<void, vesper::core::error>;
+
+// Rebuild a manifest by scanning wal-*.log files in the directory (sorted by sequence, then by filename)
+
+// Lenient rebuild mode (best-effort) — opt-in API
+enum class RebuildMode { Strict, Lenient };
+
+struct RebuildIssue {
+  std::string file;                       // filename (relative)
+  std::uint64_t seq{};                    // sequence number
+  vesper::core::error_code code{};        // error category
+  std::string message;                    // human-readable detail
+  std::optional<std::uint64_t> start_lsn; // optional LSN context
+  std::optional<std::uint64_t> first_lsn; // optional LSN context
+  std::optional<std::uint64_t> end_lsn;   // optional LSN context
+  std::optional<std::uint64_t> prev_end_lsn; // for overlaps/order vs previous
+};
+
+struct LenientRebuildResult {
+  Manifest manifest;                      // partial manifest with only valid entries
+  std::vector<RebuildIssue> issues;       // per-file/entry issues encountered during rebuild
+};
+
+// Rebuild a manifest in lenient (best-effort) mode, accumulating issues and skipping bad files/entries
+auto rebuild_manifest_lenient(const std::filesystem::path& dir)
+    -> std::expected<LenientRebuildResult, vesper::core::error>;
+
 auto rebuild_manifest(const std::filesystem::path& dir)
     -> std::expected<Manifest, vesper::core::error>;
 
 // Manifest validation API (advisory by default; enforcement is optional and non-destructive)
-enum class ManifestIssueCode { OutOfOrderSeq, DuplicateFile, MissingFileOnDisk, ExtraFileOnDisk, SeqGap, Empty, BadHeader };
+enum class ManifestIssueCode { OutOfOrderSeq, DuplicateFile, DuplicateSeq, LsnInvalid, LsnOverlap, LsnOrder, LsnGap, MissingFileOnDisk, ExtraFileOnDisk, SeqGap, Empty, BadHeader };
 enum class Severity { Warning, Error };
 struct ManifestIssue { ManifestIssueCode code; Severity severity; std::string file; std::uint64_t seq{}; std::string message; };
 struct ManifestValidation { bool ok{true}; std::vector<ManifestIssue> issues; };

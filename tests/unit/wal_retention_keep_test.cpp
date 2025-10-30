@@ -1,6 +1,8 @@
 #include <catch2/catch_all.hpp>
 #include <vesper/wal/io.hpp>
 #include <vesper/wal/retention.hpp>
+#include <vesper/wal/manifest.hpp>
+
 #include <filesystem>
 
 #include <tests/support/replayer_payload.hpp>
@@ -113,6 +115,34 @@ TEST_CASE("retention and snapshot interplay preserves replay semantics", "[wal][
     ToyIndex idx = test_support::build_toy_index_baseline_then_replay(dir, 5);
     REQUIRE(idx.count(406) == 1);
   }
+
+  fs::remove_all(dir, ec);
+}
+
+
+TEST_CASE("purge_keep_last_n selects by end_lsn when seq order disagrees (RED)", "[wal][retention][unify][red]"){
+  namespace fs = std::filesystem;
+  auto dir = fs::temp_directory_path() / "vesper_wal_unify_endlsn_inline";
+  std::error_code ec; fs::remove_all(dir, ec); fs::create_directories(dir, ec);
+
+  // Create two dummy wal files
+  const std::string f1 = "wal-00000001.log";
+  const std::string f2 = "wal-00000002.log";
+  { std::ofstream(dir / f1).put('\n'); }
+  { std::ofstream(dir / f2).put('\n'); }
+
+  // Manifest: seq=2 has smaller end_lsn than seq=1
+  wal::Manifest m;
+  m.entries.push_back(wal::ManifestEntry{.file=f1, .seq=1, .start_lsn=100, .first_lsn=100, .end_lsn=200, .frames=2, .bytes=1});
+  m.entries.push_back(wal::ManifestEntry{.file=f2, .seq=2, .start_lsn=50,  .first_lsn=50,  .end_lsn=50,  .frames=1, .bytes=1});
+  REQUIRE(wal::save_manifest(dir, m).has_value());
+
+  // Expect unified semantics to keep f1 (higher end_lsn)
+  REQUIRE(wal::purge_keep_last_n(dir, 1).has_value());
+  const bool f1_exists = fs::exists(dir / f1);
+  const bool f2_exists = fs::exists(dir / f2);
+  REQUIRE(f1_exists == true);
+  REQUIRE(f2_exists == false);
 
   fs::remove_all(dir, ec);
 }

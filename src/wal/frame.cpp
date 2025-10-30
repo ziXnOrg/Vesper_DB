@@ -2,12 +2,15 @@
 
 #include <array>
 #include <cstring>
+#include <limits>
+
 
 namespace vesper::wal {
 
-static constexpr std::array<std::uint32_t, 256> CRC32C_TABLE = []{
+// Correct reflected CRC-32C (Castagnoli) table using reversed polynomial 0x82F63B78
+static constexpr std::array<std::uint32_t, 256> CRC32C_TABLE_REFLECTED = []{
   std::array<std::uint32_t, 256> t{};
-  const std::uint32_t poly = 0x1EDC6F41u; // Castagnoli
+  const std::uint32_t poly = 0x82F63B78u; // reversed (reflected) polynomial
   for (std::uint32_t i = 0; i < 256; ++i) {
     std::uint32_t c = i;
     for (int k = 0; k < 8; ++k) {
@@ -18,12 +21,31 @@ static constexpr std::array<std::uint32_t, 256> CRC32C_TABLE = []{
   return t;
 }();
 
-auto crc32c(std::span<const std::uint8_t> bytes) -> std::uint32_t {
+// Legacy table (incorrect orientation used historically); kept for read-side migration acceptance
+static constexpr std::array<std::uint32_t, 256> CRC32C_TABLE_LEGACY = []{
+  std::array<std::uint32_t, 256> t{};
+  const std::uint32_t poly = 0x1EDC6F41u; // standard form (non-reversed) mistakenly used with reflected update
+  for (std::uint32_t i = 0; i < 256; ++i) {
+    std::uint32_t c = i;
+    for (int k = 0; k < 8; ++k) {
+      c = (c & 1u) ? (poly ^ (c >> 1)) : (c >> 1);
+    }
+    t[i] = c;
+  }
+  return t;
+}();
+
+static inline std::uint32_t crc32c_with_table(std::span<const std::uint8_t> bytes,
+                                              const std::array<std::uint32_t, 256>& table) {
   std::uint32_t c = ~0u;
   for (auto b : bytes) {
-    c = CRC32C_TABLE[(c ^ b) & 0xFFu] ^ (c >> 8);
+    c = table[(c ^ b) & 0xFFu] ^ (c >> 8);
   }
   return ~c;
+}
+
+auto crc32c(std::span<const std::uint8_t> bytes) -> std::uint32_t {
+  return crc32c_with_table(bytes, CRC32C_TABLE_REFLECTED);
 }
 
 static auto load_le32(const std::uint8_t* p) -> std::uint32_t {
@@ -46,12 +68,22 @@ auto verify_crc32c(std::span<const std::uint8_t> full_frame) -> bool {
   if (full_frame.size() < WAL_HEADER_SIZE + 4) return false;
   const std::size_t n = full_frame.size();
   const std::uint32_t expect = load_le32(full_frame.data() + n - 4);
-  const std::uint32_t got = crc32c(full_frame.first(n - 4));
-  return expect == got;
+  const auto body = full_frame.first(n - 4);
+  const std::uint32_t got = crc32c_with_table(body, CRC32C_TABLE_REFLECTED);
+  if (expect == got) return true;
+  // Migration: accept legacy-orientation CRC during transition
+  const std::uint32_t legacy = crc32c_with_table(body, CRC32C_TABLE_LEGACY);
+  return expect == legacy;
 }
 
-auto encode_frame(std::uint64_t lsn, std::uint16_t type, std::span<const std::uint8_t> payload)
-    -> std::vector<std::uint8_t> {
+auto encode_frame_expected(std::uint64_t lsn, std::uint16_t type, std::span<const std::uint8_t> payload)
+    -> std::expected<std::vector<std::uint8_t>, vesper::core::error> {
+  using vesper::core::error; using vesper::core::error_code;
+  // Guard against 32-bit length overflow: len = header + payload + crc
+  const std::size_t max_payload = std::numeric_limits<std::uint32_t>::max() - WAL_HEADER_SIZE - 4;
+  if (payload.size() > max_payload) {
+    return std::vesper_unexpected(error{error_code::invalid_argument, "payload too large", "wal.frame"});
+  }
   const std::uint32_t len = static_cast<std::uint32_t>(WAL_HEADER_SIZE + payload.size() + 4);
   std::vector<std::uint8_t> out(len);
   std::uint8_t* p = out.data();
@@ -68,6 +100,13 @@ auto encode_frame(std::uint64_t lsn, std::uint16_t type, std::span<const std::ui
   const std::uint32_t c = crc32c({out.data(), out.size() - 4});
   store_le32(c);
   return out;
+}
+
+auto encode_frame(std::uint64_t lsn, std::uint16_t type, std::span<const std::uint8_t> payload)
+    -> std::vector<std::uint8_t> {
+  auto enc = encode_frame_expected(lsn, type, payload);
+  if (!enc) { return {}; }
+  return std::move(*enc);
 }
 
 auto decode_frame(std::span<const std::uint8_t> bytes) -> std::expected<WalFrame, core::error> {

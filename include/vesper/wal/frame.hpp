@@ -10,6 +10,7 @@
 
 #include <cstdint>
 #include <expected>
+#include <vesper/expected_polyfill.hpp>
 #include <vesper/span_polyfill.hpp>
 #include <string>
 #include <vector>
@@ -40,6 +41,11 @@ auto verify_crc32c(std::span<const std::uint8_t> full_frame) -> bool;
 // Encode a frame into a contiguous byte vector (little-endian)
 auto encode_frame(std::uint64_t lsn, std::uint16_t type, std::span<const std::uint8_t> payload)
     -> std::vector<std::uint8_t>;
+
+
+  // Encode a frame; error-returning variant with overflow guards (preferred in writers)
+  auto encode_frame_expected(std::uint64_t lsn, std::uint16_t type, std::span<const std::uint8_t> payload)
+      -> std::expected<std::vector<std::uint8_t>, core::error>;
 
 // Decode a frame from a contiguous buffer (no allocations for payload)
 auto decode_frame(std::span<const std::uint8_t> bytes) -> std::expected<WalFrame, core::error>;

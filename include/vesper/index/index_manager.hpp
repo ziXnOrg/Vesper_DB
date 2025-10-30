@@ -307,6 +307,12 @@ public:
 private:
     class Impl;
     std::unique_ptr<Impl> impl_;
+
+#ifdef VESPER_ENABLE_TESTS
+    // Debug-only: record last effective query config used by search() for test introspection
+    mutable QueryConfig last_applied_query_config_debug_{};
+#endif
+
 };
 
 /** \brief Query planner for cost-based index selection.

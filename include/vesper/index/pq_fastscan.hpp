@@ -14,6 +14,14 @@
  *
  * Performance: 2-4x faster than standard PQ on modern CPUs.
  */
+/**
+ * ABI note: The public C++ API in this header uses STL types (e.g., std::vector<PqCodeBlock>)
+ * and std::span in function signatures. These are not guaranteed ABI-stable across compilers,
+ * standard libraries, or CRT/ABI versions. The C++ API is intended for in-process use with the
+ * same toolchain. For cross-DSO or FFI/plugin boundaries, prefer the stable C API under
+ * include/vesper/c/ (see docs/C_API_Reference.md).
+ */
+
 
 #include <cstdint>
 #include <memory>
@@ -48,7 +56,7 @@ class PqCodeBlock {
 public:
     static constexpr std::size_t MAX_BLOCK_SIZE = 32;
     static constexpr std::size_t CACHE_LINE = 64;
-    
+
     PqCodeBlock(std::uint32_t m, std::uint32_t block_size)
         : m_(m)
         , block_size_(block_size)
@@ -56,40 +64,40 @@ public:
         , codes_(m * MAX_BLOCK_SIZE) {
         clear();
     }
-    
+
     /** \brief Add a PQ code to the block. */
     auto add_code(const std::uint8_t* code) -> bool {
         if (n_codes_ >= block_size_) return false;
-        
+
         for (std::uint32_t sub = 0; sub < m_; ++sub) {
             codes_[sub * MAX_BLOCK_SIZE + n_codes_] = code[sub];
         }
         n_codes_++;
         return true;
     }
-    
+
     /** \brief Get pointer to codes for subquantizer. */
-    [[nodiscard]] auto get_subquantizer_codes(std::uint32_t sub) const noexcept 
+    [[nodiscard]] auto get_subquantizer_codes(std::uint32_t sub) const noexcept
         -> const std::uint8_t* {
         return codes_.data() + sub * MAX_BLOCK_SIZE;
     }
-    
+
     /** \brief Check if block is full. */
     [[nodiscard]] auto is_full() const noexcept -> bool {
         return n_codes_ >= block_size_;
     }
-    
+
     /** \brief Get number of codes in block. */
     [[nodiscard]] auto size() const noexcept -> std::uint32_t {
         return n_codes_;
     }
-    
+
     /** \brief Clear the block. */
     auto clear() noexcept -> void {
         n_codes_ = 0;
         std::fill(codes_.begin(), codes_.end(), 0);
     }
-    
+
 private:
     std::uint32_t m_;
     std::uint32_t block_size_;
@@ -108,17 +116,20 @@ public:
         , ksub_(1U << config.nbits)
         , trained_(false) {
     }
-    
+
     /** \brief Train PQ codebooks on sample data.
      *
      * \param data Training vectors [n x dim]
      * \param n Number of training vectors
      * \param dim Vector dimensionality
      * \return Success or error
+     *
+     * Preconditions: dim divisible by m; n >= ksub (2^nbits).
+     * Errors: precondition_failed (invalid dim or insufficient n); internal (k-means failure).
      */
     auto train(const float* data, std::size_t n, std::size_t dim)
         -> std::expected<void, core::error>;
-    
+
     /** \brief Encode vectors into PQ codes.
      *
      * \param data Vectors to encode [n x dim]
@@ -126,16 +137,21 @@ public:
      * \param[out] codes Output codes [n x m]
      */
     auto encode(const float* data, std::size_t n, std::uint8_t* codes) const -> void;
-    
+
     /** \brief Encode vectors into blocks.
      *
      * \param data Vectors to encode [n x dim]
      * \param n Number of vectors
      * \return Vector of code blocks
+     *
+     * ABI note: Returns std::vector<PqCodeBlock>, which is not guaranteed ABI-stable
+     * across compilers/standard libraries/CRT versions. See the header-level ABI note
+     * above; for cross-DSO/FFI boundaries, use the stable C API (include/vesper/c/;
+     * see docs/C_API_Reference.md).
      */
-    auto encode_blocks(const float* data, std::size_t n) 
+    auto encode_blocks(const float* data, std::size_t n)
         -> std::vector<PqCodeBlock>;
-    
+
     /** \brief Decode PQ codes back to vectors.
      *
      * \param codes PQ codes [n x m]
@@ -143,31 +159,46 @@ public:
      * \param[out] data Output vectors [n x dim]
      */
     auto decode(const std::uint8_t* codes, std::size_t n, float* data) const -> void;
-    
+
     /** \brief Compute distances using lookup tables (ADC).
      *
      * \param query Query vector [dim]
      * \param blocks Code blocks
-     * \param[out] distances Output distances
+     * \param[out] distances Output distances laid out with per-block stride = config.block_size.
+     * \details Output layout: total_codes = blocks.size() * config.block_size. For each block b,
+     *          only the first blocks[b].size() entries are valid; the remainder of the block's
+     *          stride are padding. Callers must not consume padding entries.
+     *
+     * ABI note: Accepts std::vector<PqCodeBlock>; not guaranteed ABI-stable across
+     * compilers/standard libraries/CRT versions. See header-level ABI guidance; for
+     * cross-DSO/FFI, use the stable C API (include/vesper/c/; docs/C_API_Reference.md).
      */
     auto compute_distances(const float* query,
                           const std::vector<PqCodeBlock>& blocks,
                           float* distances) const -> void;
-    
-    /** \brief Compute distances with AVX2 acceleration. */
+
+    /** \brief Compute distances with AVX2 acceleration.
+     *  ABI note: Accepts std::vector<PqCodeBlock>; not ABI-stable across compilers/standard
+     *  libraries/CRT versions. See header-level ABI guidance; for cross-DSO/FFI, use the
+     *  stable C API (include/vesper/c/; docs/C_API_Reference.md).
+     */
     #ifdef __AVX2__
     auto compute_distances_avx2(const float* query,
                                const std::vector<PqCodeBlock>& blocks,
                                float* distances) const -> void;
     #endif
-    
-    /** \brief Compute distances with AVX-512 acceleration. */
+
+    /** \brief Compute distances with AVX-512 acceleration.
+     *  ABI note: Accepts std::vector<PqCodeBlock>; not ABI-stable across compilers/standard
+     *  libraries/CRT versions. See header-level ABI guidance; for cross-DSO/FFI, use the
+     *  stable C API (include/vesper/c/; docs/C_API_Reference.md).
+     */
     #ifdef __AVX512F__
     auto compute_distances_avx512(const float* query,
                                  const std::vector<PqCodeBlock>& blocks,
                                  float* distances) const -> void;
     #endif
-    
+
     /** \brief Precompute lookup tables for a query.
      *
      * \param query Query vector [dim]
@@ -198,7 +229,11 @@ public:
 
     /** \brief Export codebooks as a dense row-major array [m*ksub x dsub]. */
     auto export_codebooks(std::vector<float>& out) const -> void;
-    /** \brief Import pre-trained codebooks and mark as trained. */
+    /** \brief Import pre-trained codebooks and mark as trained.
+     *  ABI note: Takes std::span<const float>, which is not guaranteed ABI-stable across
+     *  compilers/standard libraries/CRT versions. See header-level ABI guidance; for
+     *  cross-DSO/FFI boundaries, use the stable C API (include/vesper/c/; docs/C_API_Reference.md).
+     */
     auto import_pretrained(std::size_t dsub, std::span<const float> data) -> void;
     /** \brief Get ksub (codes per subquantizer). */
     [[nodiscard]] auto ksub() const noexcept -> std::uint32_t { return ksub_; }
@@ -208,16 +243,16 @@ private:
     std::uint32_t ksub_;                        /**< Codes per subquantizer */
     std::size_t dsub_{0};                       /**< Dimension per subquantizer */
     bool trained_;
-    
+
     /** Codebooks [m][ksub][dsub] in aligned buffer */
     std::unique_ptr<AlignedCentroidBuffer> codebooks_;
-    
+
     /** \brief Train a single subquantizer. */
     auto train_subquantizer(const float* data, std::size_t n,
-                           std::uint32_t sub_idx) -> void;
-    
+                           std::uint32_t sub_idx) -> std::expected<void, core::error>;
+
     /** \brief Find nearest codebook entry. */
-    auto find_nearest_code(const float* vec, std::uint32_t sub_idx) const 
+    auto find_nearest_code(const float* vec, std::uint32_t sub_idx) const
         -> std::uint8_t;
 };
 
@@ -228,30 +263,30 @@ inline auto accumulate_distances_avx2(
     const float* lut,
     std::uint32_t n_codes,
     float* distances) -> void {
-    
+
     // Process 8 codes at a time
     std::uint32_t i = 0;
     for (; i + 8 <= n_codes; i += 8) {
         // Load 8 code bytes
         const __m128i code_bytes = _mm_loadl_epi64(
             reinterpret_cast<const __m128i*>(codes + i));
-        
+
         // Convert to 32-bit integers for gather
         const __m256i indices = _mm256_cvtepu8_epi32(code_bytes);
-        
+
         // Gather distances from lookup table
         const __m256 dists = _mm256_i32gather_ps(lut, indices, 4);
-        
+
         // Load current accumulated distances
         __m256 acc = _mm256_load_ps(distances + i);
-        
+
         // Accumulate
         acc = _mm256_add_ps(acc, dists);
-        
+
         // Store back
         _mm256_store_ps(distances + i, acc);
     }
-    
+
     // Handle remainder
     for (; i < n_codes; ++i) {
         distances[i] += lut[codes[i]];
@@ -265,7 +300,9 @@ inline auto accumulate_distances_avx2(
  * \param queries Query vectors [n_queries x dim]
  * \param n_queries Number of queries
  * \param blocks Code blocks
- * \param[out] distances Output [n_queries x total_codes]
+ * \param[out] distances Output [n_queries x total_codes], where total_codes = blocks.size() * pq.config().block_size
+ * \details Output layout matches compute_distances(): fixed per-block stride = config.block_size; only the first
+ *          blocks[b].size() entries per block are valid; remainder of each block's stride is padding.
  */
 inline auto compute_batch_distances(
     const FastScanPq& pq,
@@ -273,12 +310,17 @@ inline auto compute_batch_distances(
     std::size_t n_queries,
     const std::vector<PqCodeBlock>& blocks,
     float* distances) -> void {
-    
+
+    // Early exit on empty inputs to avoid dereferencing blocks[0] and to define no-op semantics
+    if (n_queries == 0 || blocks.empty()) {
+        return;
+    }
+    const std::size_t total_codes = blocks.size() * pq.config().block_size;
+
     #pragma omp parallel for
     for (int q = 0; q < static_cast<int>(n_queries); ++q) {
         const float* query = queries + q * pq.dimension();
-        float* query_dists = distances + q * (blocks.size() * blocks[0].size());
-        
+        float* query_dists = distances + static_cast<std::size_t>(q) * total_codes;
         pq.compute_distances(query, blocks, query_dists);
     }
 }

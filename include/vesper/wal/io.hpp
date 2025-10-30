@@ -6,7 +6,7 @@
  * Notes
  * - Writer is not thread-safe; one writer per file.
  * - recover_scan is read-only and reentrant for independent paths.
- * - fsync is optional and guarded; tests do not depend on it.
+ * - fsync is optional and guarded; when enabled via knobs or flush(true), the writer performs OS-level syncs (fsync/FlushFileBuffers).
  */
 
 #include <array>
@@ -15,6 +15,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <vesper/expected_polyfill.hpp>
 #include <vesper/span_polyfill.hpp>
 #include <string>
 #include <string_view>
@@ -32,19 +33,19 @@ namespace vesper::wal {
  */
 
 /** \brief Delivery controls for scanning/replay (additive, optional).
- *  If cutoff_lsn > 0, overrides snapshot cutoff. type_mask filters delivered types.
- *  If max_frames/max_bytes > 0, delivery is limited (stats reflect delivered frames).
+ *  cutoff_lsn (>0) overrides snapshot cutoff; type_mask filters delivered types.
+ *  max_frames/max_bytes (>0) limit delivery; max_bytes gating uses payload bytes only; stats reflect delivered frames.
  */
 struct DeliveryLimits {
   std::uint64_t cutoff_lsn{0};       /**< overrides snapshot if >0 */
   std::uint32_t type_mask{~0u};      /**< bit t enables type==t; default all */
   std::size_t   max_frames{0};       /**< 0 = unlimited */
-  std::size_t   max_bytes{0};        /**< 0 = unlimited (payload+header bytes) */
+  std::size_t   max_bytes{0};        /**< 0 = unlimited; gating uses payload bytes only */
 };
 
 struct RecoveryStats {
-  std::size_t frames{};             /**< number of valid frames visited */
-  std::size_t bytes{};              /**< total bytes of valid frames */
+  std::size_t frames{};             /**< number of delivered frames */
+  std::size_t bytes{};              /**< total bytes of delivered frames (full frame bytes: header + payload + CRC) */
   std::uint64_t last_lsn{};         /**< LSN of the last valid frame */
 
 
@@ -67,8 +68,15 @@ struct WalWriterStats {
 
 /** \brief Rotation/open options for WAL writer. */
 
-/** Durability profiles map to fsync knobs (stats-only; no OS fsync). */
+/** Durability profiles map to fsync knobs (fsync/FlushFileBuffers when enabled). */
 enum class DurabilityProfile { None, Rotation, Flush, RotationAndFlush };
+
+/// \brief Delivery decision for accepting-callback scans
+/// - DeliverAndContinue: delivered; counted; continue
+/// - DeliverAndStop: delivered; counted; stop after this frame
+/// - Skip: not delivered; not counted; continue
+/// - SkipAndStop: not delivered; not counted; stop
+enum class DeliverDecision : std::uint8_t { DeliverAndContinue, DeliverAndStop, Skip, SkipAndStop };
 
 struct WalWriterOptions {
   std::filesystem::path dir;     /**< directory to place wal-*.log files */
@@ -100,7 +108,7 @@ public:
   auto append(std::uint64_t lsn, std::uint16_t type, std::span<const std::uint8_t> payload)
       -> std::expected<void, vesper::core::error>;
 
-  /** Flush buffered data. If sync=true or options.fsync_on_flush, increments stats_.syncs. */
+  /** Flush buffered data. If sync=true or options.fsync_on_flush, performs OS-level sync (fsync/FlushFileBuffers) and increments stats_.syncs. */
   auto flush(bool sync = false) -> std::expected<void, vesper::core::error>;
 
   // Publish a snapshot in rotation mode (writes wal.snapshot in dir_). No fsync; deterministic.
@@ -139,20 +147,51 @@ private:
 
 // Sequentially scans a WAL file and invokes on_frame for each valid frame.
 // Stops on torn/truncated tail without error. Monotonicity is warn-only.
-auto recover_scan(std::string_view path, std::function<void(const WalFrame&)> on_frame)
+[[nodiscard]] auto recover_scan(std::string_view path, std::function<void(const WalFrame&)> on_frame)
+    -> std::expected<RecoveryStats, vesper::core::error>;
+
+/** \brief Accepting-callback variant.
+ *  Callback returns expected<DeliverDecision,error> with semantics:
+ *  - DeliverAndContinue: delivered; counted; continue
+ *  - DeliverAndStop: delivered; counted; stop (ok(stats_so_far))
+ *  - Skip/SkipAndStop: not delivered; not counted; stop if *_AndStop; continue otherwise
+ *  - unexpected(error): stop with error
+ *  Example:
+ *  @code
+ *  std::size_t n=0;
+ *  auto cb = [&](const WalFrame&){ return (++n==5) ? DeliverAndStop : DeliverAndContinue; };
+ *  auto st = recover_scan(path, cb);
+ *  @endcode
+ */
+[[nodiscard]] auto recover_scan(std::string_view path, std::function<std::expected<DeliverDecision, vesper::core::error>(const WalFrame&)> on_frame)
     -> std::expected<RecoveryStats, vesper::core::error>;
 
 // Scan a directory of rotated WAL files (manifest-aware). Aggregates stats across files.
 // Snapshot semantics: if wal.snapshot exists and parses, frames with lsn <= snapshot.last_lsn are skipped.
-auto recover_scan_dir(const std::filesystem::path& dir, std::function<void(const WalFrame&)> on_frame)
+[[nodiscard]] auto recover_scan_dir(const std::filesystem::path& dir, std::function<void(const WalFrame&)> on_frame)
     -> std::expected<RecoveryStats, vesper::core::error>;
 
-// Overload: filter delivered frames by type bitmask (bit t enables type==t)
-auto recover_scan_dir(const std::filesystem::path& dir, std::uint32_t type_mask, std::function<void(const WalFrame&)> on_frame)
+/// Accepting-callback directory scan: early-stop/error propagation; stats count only delivered frames
+[[nodiscard]] auto recover_scan_dir(const std::filesystem::path& dir, std::function<std::expected<DeliverDecision, vesper::core::error>(const WalFrame&)> on_frame)
     -> std::expected<RecoveryStats, vesper::core::error>;
-  // Overload: delivery controls (cutoff override, type mask, frame/byte limits)
-  auto recover_scan_dir(const std::filesystem::path& dir, const DeliveryLimits& limits, std::function<void(const WalFrame&)> on_frame)
-      -> std::expected<RecoveryStats, vesper::core::error>;
+
+/// Overload: filter delivered frames by type bitmask (bit t enables type==t); stats reflect post-filter delivery
+[[nodiscard]] auto recover_scan_dir(const std::filesystem::path& dir, std::uint32_t type_mask, std::function<void(const WalFrame&)> on_frame)
+    -> std::expected<RecoveryStats, vesper::core::error>;
+
+// Overload: type mask with accepting-callback
+[[nodiscard]] auto recover_scan_dir(const std::filesystem::path& dir, std::uint32_t type_mask,
+                      std::function<std::expected<DeliverDecision, vesper::core::error>(const WalFrame&)> on_frame)
+    -> std::expected<RecoveryStats, vesper::core::error>;
+
+/// Overload: delivery controls (cutoff/type/limits); max_bytes gating uses payload bytes; stats reflect delivered frames
+[[nodiscard]] auto recover_scan_dir(const std::filesystem::path& dir, const DeliveryLimits& limits, std::function<void(const WalFrame&)> on_frame)
+    -> std::expected<RecoveryStats, vesper::core::error>;
+
+// Overload: delivery controls with accepting-callback
+[[nodiscard]] auto recover_scan_dir(const std::filesystem::path& dir, const DeliveryLimits& limits,
+                      std::function<std::expected<DeliverDecision, vesper::core::error>(const WalFrame&)> on_frame)
+    -> std::expected<RecoveryStats, vesper::core::error>;
 
 
 } // namespace vesper::wal
