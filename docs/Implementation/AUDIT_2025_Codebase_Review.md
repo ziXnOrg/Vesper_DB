@@ -1112,11 +1112,15 @@ Acceptance for this PR iteration:
 
 ### include/vesper/core/memory_pool.hpp
 
-- [ ] High: Overflow-unsafe exhaustion check can wrap and allow OOB
+- [x] High: Overflow-unsafe exhaustion check can wrap and allow OOB — RESOLVED in Task 23 (PR #67)
   - Location: MemoryArena::allocate (63–74), specifically `if (offset + bytes > size_)` at 68
-  - Details: Uses `offset + bytes > size_` which can overflow `size_t` and pass the check, leading to out-of-bounds writes. Safer pattern is `if (bytes > size_ - offset)` after verifying `offset <= size_`.
-  - Web validation: Common bump-allocator guidance requires power-of-two align and overflow-safe checks (see StackOverflow align discussion; Nick Fitzgerald “Always Bump Downwards”).
-  - Recommendation: In Phase 2, change the condition to `if (offset > size_ - bytes)` or `if (bytes > size_ - offset)`; validate `alignment != 0` and power-of-two.
+  - Fix: Implemented overflow-safe allocation guard
+    - Align absolute address (base + used_) to requested alignment with overflow checks
+    - Subtraction-based capacity check: `if (bytes > size_ - offset)` after validating offset <= size_
+    - Validate `alignment` is non-zero power-of-two; overflow-safe round-up for `bytes`
+    - Doxygen contract added; behavior unchanged for valid inputs; nullptr on invalid/overflowing requests
+  - Tests: Added 4 unit tests under [memory_pool] covering overflow boundary, invalid alignment, exhaustion, and normal aligned allocations (all pass)
+  - Links: PR #67, docs/Implementation/IMPL_Memory_Pool_Overflow_Fix.md
 
 - [ ] High: Scope-escape hazard for pooled containers can cause UAF
   - Location: PoolScope dtor resets arena (210–212); pooled helpers (PooledVector/make_pooled_vector at 227–239)
