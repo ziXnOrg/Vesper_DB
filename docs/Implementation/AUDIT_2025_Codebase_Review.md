@@ -68,10 +68,11 @@
 
 ### include/vesper/index/pq_fastscan.hpp
 
-- [ ] High: Training error propagation missing (silent success)
+- [x] High: Training error propagation missing (silent success) — RESOLVED
   - **Location**: train_subquantizer() returns void; train() ignores failures (src/index/pq_fastscan.cpp 62–71; 12–40)
   - **Details**: If k-means fails, codebook entries remain default-initialized but train() still returns success. Leads to degraded accuracy and undefined behavior in downstream SIMD paths.
   - **Recommendation**: Propagate errors via std::expected from train_subquantizer() and aggregate in train(); document possible error codes in header.
+  - **Resolution**: Implemented error propagation via std::expected from train_subquantizer(); train() aggregates subquantizer errors and returns first failure; added precondition guard n < ksub → precondition_failed; set trained_=true only on full success; updated Doxygen to enumerate error codes; added unit tests: tests/unit/pq_fastscan_training_error_test.cpp.
 
 - [ ] High: encode/decode/compute_lookup_tables require trained state; not validated
   - **Location**: encode()/decode()/compute_lookup_tables declarations (128–176); implementations use codebooks_ without trained_ check (src/index/pq_fastscan.cpp 97–109, 279–291, 136–157)
@@ -369,7 +370,7 @@
 
 ## Summary (updated)
 - Total files reviewed (this pass): 23
-- High-priority issues: 5
+- High-priority issues: 4
 - Medium-priority issues: 63
 - Low-priority issues: 35
 

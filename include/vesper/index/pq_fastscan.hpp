@@ -123,6 +123,9 @@ public:
      * \param n Number of training vectors
      * \param dim Vector dimensionality
      * \return Success or error
+     *
+     * Preconditions: dim divisible by m; n >= ksub (2^nbits).
+     * Errors: precondition_failed (invalid dim or insufficient n); internal (k-means failure).
      */
     auto train(const float* data, std::size_t n, std::size_t dim)
         -> std::expected<void, core::error>;
@@ -246,7 +249,7 @@ private:
 
     /** \brief Train a single subquantizer. */
     auto train_subquantizer(const float* data, std::size_t n,
-                           std::uint32_t sub_idx) -> void;
+                           std::uint32_t sub_idx) -> std::expected<void, core::error>;
 
     /** \brief Find nearest codebook entry. */
     auto find_nearest_code(const float* vec, std::uint32_t sub_idx) const
