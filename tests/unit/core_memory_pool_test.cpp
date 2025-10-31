@@ -57,3 +57,14 @@ TEST_CASE("MemoryArena honors alignment and updates used by aligned size", "[mem
   REQUIRE(used2 - used1 == 128);
 }
 
+
+TEST_CASE("PooledVector works within PoolScope", "[memory_pool][scope]") {
+  PoolScope scope;
+  auto v = make_pooled_vector<int>(0);
+  v.reserve(128);
+  v.push_back(42);
+  v.push_back(43);
+  REQUIRE(v.size() == 2);
+  REQUIRE(v[0] == 42);
+  REQUIRE(v[1] == 43);
+}

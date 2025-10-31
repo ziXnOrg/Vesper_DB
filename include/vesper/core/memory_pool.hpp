@@ -20,6 +20,8 @@
 #include <atomic>
 #include <thread>
 #include <limits>
+#include <cassert>
+
 #include "vesper/platform/memory.hpp"
 
 namespace vesper::core {
@@ -189,7 +191,13 @@ public:
         return pool;
     }
 
-    /** \brief Get PMR allocator for current thread. */
+    /** \brief Get PMR allocator for the current thread.
+     *  \pre Must be used on the same thread that owns this ThreadLocalPool.
+     *  \post Returned allocator's allocations are backed by the thread-local arena and will be invalidated when the pool is reset (e.g., at PoolScope destruction).
+     *  \thread_safety Not safe to share across threads; obtain per-thread allocators via instance().
+     *  \warning Lifetime of allocations is scope-bounded by PoolScope; do not let pmr containers escape that scope.
+     *  \see PoolScope, make_pooled_vector
+     */
     [[nodiscard]] auto allocator() -> std::pmr::polymorphic_allocator<std::byte> {
         return std::pmr::polymorphic_allocator<std::byte>(&resource_);
     }
@@ -213,6 +221,7 @@ public:
     };
 
     [[nodiscard]] auto stats() const -> Stats {
+
         return Stats{
             .bytes_used = arena_.used(),
             .bytes_total = arena_.size(),
@@ -220,6 +229,13 @@ public:
                           static_cast<float>(arena_.size())
         };
     }
+#ifndef NDEBUG
+    // Debug-only: track nesting of PoolScope on this thread to prevent misuse.
+    auto debug_scope_enter() noexcept -> void { ++scope_depth_; }
+    auto debug_scope_exit() noexcept -> void { --scope_depth_; }
+    [[nodiscard]] auto debug_scope_depth() const noexcept -> int { return scope_depth_; }
+#endif
+
 
 private:
     ThreadLocalPool()
@@ -243,16 +259,33 @@ private:
     MemoryArena arena_;
     ArenaResource resource_;
 
+#ifndef NDEBUG
+    int scope_depth_{0};
+#endif
+
     inline static std::atomic<std::uint32_t> active_threads_{0};
 };
 
-/** \brief RAII scope guard for pool lifetime. */
+/** \brief RAII scope guard for pooled allocations.
+ *  \pre All pooled allocations and pmr containers created within this scope MUST NOT escape it.
+ *  \post On destruction, the underlying pool is reset; all pool-backed storage becomes invalid.
+ *  \thread_safety Not thread-safe across threads; use per-thread scopes.
+ *  \warning Do not return/move PooledVector or any pmr container using ThreadLocalPool out of this scope.
+ *  \see ThreadLocalPool::allocator, make_pooled_vector
+ */
 class PoolScope {
 public:
-    PoolScope() : pool_(ThreadLocalPool::instance()) {}
+    PoolScope() : pool_(ThreadLocalPool::instance()) {
+#ifndef NDEBUG
+        pool_.debug_scope_enter();
+#endif
+    }
 
     ~PoolScope() {
         pool_.reset();
+#ifndef NDEBUG
+        pool_.debug_scope_exit();
+#endif
     }
 
     PoolScope(const PoolScope&) = delete;
@@ -267,13 +300,27 @@ private:
     ThreadLocalPool& pool_;
 };
 
-/** \brief Pooled vector using thread-local allocation. */
+/** \brief Pooled vector using thread-local allocation.
+ *  \note This is an alias to std::pmr::vector<T> using ThreadLocalPool as upstream resource.
+ *  \warning Lifetime of the underlying storage is bounded by the active PoolScope; do not let the container escape that scope.
+ *  \see PoolScope, ThreadLocalPool::allocator, make_pooled_vector
+ */
 template<typename T>
 using PooledVector = std::pmr::vector<T>;
 
-/** \brief Create pooled vector in current thread's pool. */
+/** \brief Create pooled vector in the current thread's pool.
+ *  \pre Must be called with an active PoolScope on the current thread.
+ *  \post Returned container's storage is allocated from ThreadLocalPool and is invalidated at PoolScope destruction.
+ *  \thread_safety Not safe across threads.
+ *  \warning Do not return/move the returned container past the lifetime of the PoolScope.
+ *  \see PoolScope, ThreadLocalPool::allocator
+ */
 template<typename T>
 [[nodiscard]] auto make_pooled_vector(std::size_t size = 0) -> PooledVector<T> {
+#ifndef NDEBUG
+    assert(ThreadLocalPool::instance().debug_scope_depth() > 0 &&
+           "make_pooled_vector must be used within a core::PoolScope");
+#endif
     auto& pool = ThreadLocalPool::instance();
     PooledVector<T> vec(pool.allocator());
     if (size > 0) {

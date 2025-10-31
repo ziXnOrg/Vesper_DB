@@ -1124,11 +1124,13 @@ Acceptance for this PR iteration:
   - Tests: Added 4 unit tests under [memory_pool] covering overflow boundary, invalid alignment, exhaustion, and normal aligned allocations (all pass)
   - Links: PR #67, docs/Implementation/IMPL_Memory_Pool_Overflow_Fix.md
 
-- [ ] High: Scope-escape hazard for pooled containers can cause UAF
-  - Location: PoolScope dtor resets arena (210–212); pooled helpers (PooledVector/make_pooled_vector at 227–239)
+- [x] High: Scope-escape hazard for pooled containers can cause UAF
+  - Location: include/vesper/core/memory_pool.hpp — PoolScope, PooledVector, make_pooled_vector, ThreadLocalPool
   - Details: `PoolScope` calls `reset()` in its destructor, invalidating all storage from the arena. Any `PooledVector`/pmr containers allocated in that scope must not escape it. Returning/moving a pooled container beyond the scope → dangling storage and use‑after‑free.
   - Web validation: pmr containers rely on the lifetime of their upstream memory_resource; monotonic/arena resources require non‑escaping allocations.
-  - Recommendation: Document strict non‑escape rule in header; add debug assertions in helpers (Phase 2) and usage guidance (examples). Consider `[[nodiscard]]` helper that returns a scope‑bound handle.
+  - Resolution (Task 24): Documented non‑escape contract; added debug‑only scope‑depth tracking in `ThreadLocalPool`; `PoolScope` ctor/dtor now adjust debug scope depth; `make_pooled_vector` asserts an active `PoolScope` in Debug; added unit test `[memory_pool][scope]`; created `docs/Implementation/IMPL_Pooled_Container_Scope_Safety.md`. Zero overhead in Release; existing correct usage unaffected.
+  - Tests: All `[memory_pool]` tests including `[scope]` pass deterministically in Debug and Release.
+  - Links: docs/Implementation/IMPL_Pooled_Container_Scope_Safety.md; PR #67 follow‑up
 
 - [ ] Medium: Alignment handling assumes power‑of‑two; not validated
   - Location: MemoryArena::align_up (97–100); allocate(alignment) (63–74)
