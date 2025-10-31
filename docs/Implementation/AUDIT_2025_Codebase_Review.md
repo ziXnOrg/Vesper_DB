@@ -1163,10 +1163,11 @@ Acceptance for this PR iteration:
   - Details: 64MB per thread by default; many threads can consume significant RAM before reuse/reset.
   - Recommendation: Document knob and provide env/param override pattern in Phase 2.
 
-- [ ] High: Exceptions thrown in allocation paths violate no-exceptions-on-hot-paths
-  - Location: MemoryArena ctor (36–44; throw at 42); ArenaResource::do_allocate (114–121; throw at 117); TempBuffer (245–252; throw at 250)
-  - Details: Throwing std::bad_alloc in pool/arena paths used by k-means Elkan M-step and potentially kernel staging makes these code paths exceptionful; Vesper policy prohibits exceptions on hot paths.
-  - Web validation: Vesper Coding Standards — hot paths use std::expected; C++ pmr guidance allows throwing in do_allocate, but Vesper policy overrides for hot paths.
+- [x] High: Exceptions thrown in allocation paths violate no-exceptions-on-hot-paths — RESOLVED (Task 25)
+  - Location: MemoryArena ctor (throws unchanged but surfaced via prewarm); ArenaResource::do_allocate (throws preserved per PMR); TempBuffer (now has non-throwing try_create)
+  - Fix: Added ThreadLocalPool::prewarm(std::size_t) returning expected<void,error> for cold-path OOM detection; added debug-only allocation counters and hot-region markers; ArenaResource::do_allocate increments counters; TempBuffer<T>::try_create(count) returns expected<TempBuffer,error> on failure. Updated Doxygen warnings for hot-path usage.
+  - Tests: Added [memory_pool][noexcept_hot] cases for prewarm(), try_create() OOM path, and zero allocations within a presized hot loop (Debug-only instrumentation); all pass in Debug/Release.
+  - Notes: PMR throw contract preserved; zero runtime overhead in Release; backward compatibility maintained (throwing TempBuffer ctor unchanged).
   - Recommendation: Provide non-throwing variants returning std::expected or nullptr and require caller checks; reserve throw-based APIs for non-hot admin tooling; add noexcept to fast-path helpers.
 
 - [ ] Medium: TempBuffer alignment should honor alignof(T)

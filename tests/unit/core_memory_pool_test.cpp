@@ -68,3 +68,33 @@ TEST_CASE("PooledVector works within PoolScope", "[memory_pool][scope]") {
   REQUIRE(v[0] == 42);
   REQUIRE(v[1] == 43);
 }
+
+
+TEST_CASE("ThreadLocalPool prewarm succeeds for default size", "[memory_pool][noexcept_hot]") {
+  auto res = ThreadLocalPool::prewarm(MemoryArena::DEFAULT_SIZE);
+  REQUIRE(res.has_value());
+}
+
+TEST_CASE("TempBuffer::try_create returns error on OOM-sized request", "[memory_pool][noexcept_hot]") {
+  // Intentionally huge count to force failure
+  const std::size_t huge = (std::numeric_limits<std::size_t>::max)() / sizeof(int);
+  auto tb = TempBuffer<int>::try_create(huge);
+  REQUIRE_FALSE(tb.has_value());
+}
+
+TEST_CASE("Presized pooled vector performs no allocations in hot region", "[memory_pool][noexcept_hot]") {
+#ifndef NDEBUG
+  PoolScope scope;
+  auto& pool = ThreadLocalPool::instance();
+  auto v = make_pooled_vector<int>(0);
+  v.resize(1024); // pre-size before hot loop
+  pool.debug_begin_hot_region();
+  for (int i = 0; i < 1024; ++i) {
+    v[i] = i;
+  }
+  auto allocs = pool.debug_end_hot_region();
+  REQUIRE(allocs == 0);
+#else
+  SUCCEED(); // instrumentation is debug-only
+#endif
+}

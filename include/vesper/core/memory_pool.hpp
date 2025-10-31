@@ -23,6 +23,12 @@
 #include <cassert>
 
 #include "vesper/platform/memory.hpp"
+#include "vesper/error.hpp"
+
+#ifndef NDEBUG
+namespace vesper::core::detail { inline void debug_mark_pool_allocation(std::size_t) noexcept; }
+#endif
+
 
 namespace vesper::core {
 
@@ -157,11 +163,18 @@ public:
         : arena_(arena) {}
 
 protected:
+    /**
+     * \brief Allocate memory (PMR contract - throws on failure).
+     * \warning Hot paths must pre-size containers to avoid reaching this on allocation failure.
+     */
     auto do_allocate(std::size_t bytes, std::size_t alignment) -> void* override {
         void* ptr = arena_->allocate(bytes, alignment);
         if (!ptr) {
             throw std::bad_alloc();
         }
+    #ifndef NDEBUG
+        detail::debug_mark_pool_allocation(bytes);
+    #endif
         return ptr;
     }
 
@@ -190,6 +203,54 @@ public:
         thread_local ThreadLocalPool pool;
         return pool;
     }
+    /** \brief Prewarm thread-local pool (cold path).
+     *  \param arena_size [in] Desired arena size for probe (bytes)
+     *  \return success or error::out_of_memory if probe/instantiation fails
+     *  \pre Call before entering hot loops; not thread-safe across threads
+     *  \post On success, thread-local pool exists and PMR is usable
+     *  \thread_safety One call per thread at startup or before hot paths
+     *  \warning Cold path only; do not call inside hot loops
+     */
+    static auto prewarm(std::size_t arena_size = MemoryArena::DEFAULT_SIZE) noexcept
+        -> std::expected<void, error> {
+        if (arena_size > 0) {
+            void* probe = vesper::platform::aligned_allocate(arena_size, MemoryArena::ALIGNMENT);
+            if (!probe) {
+                return std::vesper_unexpected(error{
+                    vesper::core::error_code::out_of_memory,
+                    "ThreadLocalPool::prewarm: probe allocation failed",
+                    "core.memory_pool"
+                });
+            }
+            vesper::platform::aligned_deallocate(probe);
+        }
+        try {
+            (void)instance();
+            return std::expected<void, error>{};
+        } catch (const std::bad_alloc&) {
+            return std::vesper_unexpected(error{
+                vesper::core::error_code::out_of_memory,
+                "ThreadLocalPool::prewarm: bad_alloc",
+                "core.memory_pool"
+            });
+        } catch (...) {
+            return std::vesper_unexpected(error{
+                vesper::core::error_code::internal,
+                "ThreadLocalPool::prewarm: unexpected exception",
+                "core.memory_pool"
+            });
+        }
+    }
+
+#ifndef NDEBUG
+    // Debug instrumentation for hot-path allocation tracking
+    auto debug_begin_hot_region() noexcept -> void { in_hot_region_ = true; hot_region_alloc_calls_ = 0; }
+    [[nodiscard]] auto debug_end_hot_region() noexcept -> std::size_t { in_hot_region_ = false; return hot_region_alloc_calls_; }
+    [[nodiscard]] auto debug_alloc_calls() const noexcept -> std::size_t { return alloc_calls_; }
+    [[nodiscard]] auto debug_bytes_allocated() const noexcept -> std::size_t { return bytes_allocated_; }
+    auto debug_mark_allocation(std::size_t bytes) noexcept -> void { ++alloc_calls_; bytes_allocated_ += bytes; if (in_hot_region_) { ++hot_region_alloc_calls_; } }
+#endif
+
 
     /** \brief Get PMR allocator for the current thread.
      *  \pre Must be used on the same thread that owns this ThreadLocalPool.
@@ -205,7 +266,11 @@ public:
     /** \brief Allocate memory. */
     [[nodiscard]] auto allocate(std::size_t bytes,
                                 std::size_t alignment = 64) -> void* {
-        return arena_.allocate(bytes, alignment);
+        void* p = arena_.allocate(bytes, alignment);
+    #ifndef NDEBUG
+        if (p) { debug_mark_allocation(bytes); }
+    #endif
+        return p;
     }
 
     /** \brief Reset pool (deallocate all). */
@@ -264,7 +329,23 @@ private:
 #endif
 
     inline static std::atomic<std::uint32_t> active_threads_{0};
+#ifndef NDEBUG
+    std::size_t alloc_calls_{0};
+    std::size_t bytes_allocated_{0};
+    std::size_t hot_region_alloc_calls_{0};
+    bool in_hot_region_{false};
+#endif
+
 };
+#ifndef NDEBUG
+namespace detail {
+inline void debug_mark_pool_allocation(std::size_t bytes) noexcept {
+    ThreadLocalPool::instance().debug_mark_allocation(bytes);
+}
+}
+#endif
+
+
 
 /** \brief RAII scope guard for pooled allocations.
  *  \pre All pooled allocations and pmr containers created within this scope MUST NOT escape it.
@@ -333,6 +414,11 @@ template<typename T>
 template<typename T>
 class TempBuffer {
 public:
+    /** \brief Construct TempBuffer (throws on OOM).
+     *  \warning Throws std::bad_alloc on allocation failure; avoid in hot paths. Use try_create() for non-throwing construction.
+     *  \see try_create
+     */
+
     explicit TempBuffer(std::size_t count)
         : pool_(ThreadLocalPool::instance())
         , ptr_(static_cast<T*>(pool_.allocate(count * sizeof(T))))
@@ -344,9 +430,36 @@ public:
 
     ~TempBuffer() = default;
 
+    /** \brief Create TempBuffer without throwing (cold-path/preflight).
+     *  \param count [in] number of elements
+     *  \return TempBuffer on success or error::out_of_memory on failure
+     *  \warning Prefer this over the throwing constructor for hot-path preflights.
+     */
+    static auto try_create(std::size_t count) noexcept
+        -> std::expected<TempBuffer<T>, error> {
+        auto& pool = ThreadLocalPool::instance();
+        T* ptr = static_cast<T*>(pool.allocate(count * sizeof(T)));
+        if (!ptr) {
+            return std::vesper_unexpected(error{
+                vesper::core::error_code::out_of_memory,
+                "TempBuffer allocation failed",
+                "core.memory_pool"
+            });
+        }
+        return TempBuffer<T>(pool, ptr, count);
+    }
+
+    TempBuffer(TempBuffer&&) noexcept = default;
+    TempBuffer& operator=(TempBuffer&&) noexcept = default;
     TempBuffer(const TempBuffer&) = delete;
     TempBuffer& operator=(const TempBuffer&) = delete;
+private:
 
+    // Private constructor used by try_create()
+    TempBuffer(ThreadLocalPool& pool, T* ptr, std::size_t count) noexcept
+        : pool_(pool), ptr_(ptr), size_(count) {}
+
+public:
     [[nodiscard]] auto data() noexcept -> T* { return ptr_; }
     [[nodiscard]] auto data() const noexcept -> const T* { return ptr_; }
     [[nodiscard]] auto size() const noexcept -> std::size_t { return size_; }
