@@ -42,6 +42,9 @@ auto FastScanPq::train(const float* data, std::size_t n, std::size_t dim)
         config_.m * ksub_, dsub_);
 
     // Train each subquantizer independently and collect errors
+    // Thread-safety note: errs is pre-sized; each thread writes to a distinct index (sub_i).
+    // No reallocation occurs and elements are disjoint → no data race.
+
     std::vector<std::optional<core::error>> errs(config_.m);
     #pragma omp parallel for schedule(dynamic)
     for (int sub_i = 0; sub_i < static_cast<int>(config_.m); ++sub_i) {

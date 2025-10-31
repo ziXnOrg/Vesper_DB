@@ -43,15 +43,17 @@ TEST_CASE("MemoryArena honors alignment and updates used by aligned size", "[mem
   MemoryArena arena(1024);
   const std::size_t align = 128;
 
-  void* a = arena.allocate(1, align); // rounds to 128
+  void* a = arena.allocate(1, align); // rounds to 128 (may include leading pad to satisfy alignment)
   REQUIRE(a != nullptr);
   REQUIRE((reinterpret_cast<std::uintptr_t>(a) % align) == 0);
-  REQUIRE(arena.used() == 128);
+  const auto used1 = arena.used();
+  REQUIRE(used1 >= align);
 
   void* b = arena.allocate(1, align); // next 128-byte chunk
   REQUIRE(b != nullptr);
   REQUIRE((reinterpret_cast<std::uintptr_t>(b) % align) == 0);
   REQUIRE(reinterpret_cast<std::uintptr_t>(b) - reinterpret_cast<std::uintptr_t>(a) == 128);
-  REQUIRE(arena.used() == 256);
+  const auto used2 = arena.used();
+  REQUIRE(used2 - used1 == 128);
 }
 

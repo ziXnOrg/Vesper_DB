@@ -91,10 +91,13 @@ public:
         const auto base = reinterpret_cast<std::uintptr_t>(buffer_);
         const std::size_t used = used_;
         const auto maxp = (std::numeric_limits<std::uintptr_t>::max)();
+        // Defensive overflow guard per Vesper Security/Reliability policy: avoid UB in integer
+        // address arithmetic even if practically unreachable (used_ <= size_, base valid).
         if (static_cast<std::uintptr_t>(used) > maxp - base) {
             return nullptr; // would overflow computing current address
         }
         std::uintptr_t addr = base + static_cast<std::uintptr_t>(used);
+        // Defensive: aligning address could overflow on pathological inputs; fail closed.
         if (addr > maxp - mask) {
             return nullptr; // would overflow when aligning address
         }
