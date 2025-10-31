@@ -138,11 +138,12 @@
 
 ### include/vesper/index/capq.hpp
 
-- [ ] High: Const-correctness breach — const view exposes mutable spans
-  - Location: `make_view() const` (≈197–205); `CapqSoAView` fields are `std::span<std::uint64_t>` and `std::span<std::uint8_t>`
-  - Details: The const overload constructs a `CapqSoAView` with mutable spans via `const_cast`, allowing mutation through a const reference. This violates const-correctness and can enable accidental writes in read-only contexts, undermining thread-safety assumptions.
-  - Web validation: C++ Core Guidelines (Const-correctness); `std::span<const T>` should be used for read-only views.
-  - Recommendation: Introduce a `CapqSoAViewConst` with `std::span<const std::uint64_t>` and `std::span<const std::uint8_t>` (or templatize `CapqSoAView<T>`); have `make_view() const` return the const-view type. Remove `const_cast` and ensure the API enforces read-only access from const.
+- [x] High: Const-correctness breach — const view exposes mutable spans — RESOLVED (2025-10-30, Task 22)
+  - Resolution: Introduced CapqSoAViewConst with std::span<const T> fields; updated CapqSoAStorage::view() const/make_view() const to return CapqSoAViewConst and removed const_cast; added validate_capq_view(const CapqSoAViewConst&); updated CGF bridge to accept/store a const view (back-compat overload) to avoid mutability through const.
+  - Location: include/vesper/index/capq.hpp (view()/make_view() const); include/vesper/index/cgf_capq_bridge.hpp (CapqFilter::initialize)
+  - Tests: tests/unit/capq_const_view_test.cpp; local run of vesper_tests "[capq]" passed
+  - PR: #66 (feat/task22-capq-const-view)
+  - Date resolved: 2025-10-30
 - [ ] Medium: bytes_per_vector_* ignore 384-bit configuration
   - Location: `CapqSoAView::bytes_per_vector_payload()`/`bytes_per_vector_total()` (≈97–105)
   - Details: Functions return 128 and 129 bytes respectively regardless of `CapqHammingBits` (`B256` vs `B384`). For 384-bit configuration, payload should be 144 bytes and total 145 bytes. Current constants can lead to buffer mis-sizing and unsafe copies if used by callers.
@@ -1113,17 +1114,23 @@ Acceptance for this PR iteration:
 
 ### include/vesper/core/memory_pool.hpp
 
-- [ ] High: Overflow-unsafe exhaustion check can wrap and allow OOB
+- [x] High: Overflow-unsafe exhaustion check can wrap and allow OOB — RESOLVED in Task 23 (PR #67)
   - Location: MemoryArena::allocate (63–74), specifically `if (offset + bytes > size_)` at 68
-  - Details: Uses `offset + bytes > size_` which can overflow `size_t` and pass the check, leading to out-of-bounds writes. Safer pattern is `if (bytes > size_ - offset)` after verifying `offset <= size_`.
-  - Web validation: Common bump-allocator guidance requires power-of-two align and overflow-safe checks (see StackOverflow align discussion; Nick Fitzgerald “Always Bump Downwards”).
-  - Recommendation: In Phase 2, change the condition to `if (offset > size_ - bytes)` or `if (bytes > size_ - offset)`; validate `alignment != 0` and power-of-two.
+  - Fix: Implemented overflow-safe allocation guard
+    - Align absolute address (base + used_) to requested alignment with overflow checks
+    - Subtraction-based capacity check: `if (bytes > size_ - offset)` after validating offset <= size_
+    - Validate `alignment` is non-zero power-of-two; overflow-safe round-up for `bytes`
+    - Doxygen contract added; behavior unchanged for valid inputs; nullptr on invalid/overflowing requests
+  - Tests: Added 4 unit tests under [memory_pool] covering overflow boundary, invalid alignment, exhaustion, and normal aligned allocations (all pass)
+  - Links: PR #67, docs/Implementation/IMPL_Memory_Pool_Overflow_Fix.md
 
-- [ ] High: Scope-escape hazard for pooled containers can cause UAF
-  - Location: PoolScope dtor resets arena (210–212); pooled helpers (PooledVector/make_pooled_vector at 227–239)
+- [x] High: Scope-escape hazard for pooled containers can cause UAF
+  - Location: include/vesper/core/memory_pool.hpp — PoolScope, PooledVector, make_pooled_vector, ThreadLocalPool
   - Details: `PoolScope` calls `reset()` in its destructor, invalidating all storage from the arena. Any `PooledVector`/pmr containers allocated in that scope must not escape it. Returning/moving a pooled container beyond the scope → dangling storage and use‑after‑free.
   - Web validation: pmr containers rely on the lifetime of their upstream memory_resource; monotonic/arena resources require non‑escaping allocations.
-  - Recommendation: Document strict non‑escape rule in header; add debug assertions in helpers (Phase 2) and usage guidance (examples). Consider `[[nodiscard]]` helper that returns a scope‑bound handle.
+  - Resolution (Task 24): Documented non‑escape contract; added debug‑only scope‑depth tracking in `ThreadLocalPool`; `PoolScope` ctor/dtor now adjust debug scope depth; `make_pooled_vector` asserts an active `PoolScope` in Debug; added unit test `[memory_pool][scope]`; created `docs/Implementation/IMPL_Pooled_Container_Scope_Safety.md`. Zero overhead in Release; existing correct usage unaffected.
+  - Tests: All `[memory_pool]` tests including `[scope]` pass deterministically in Debug and Release.
+  - Links: docs/Implementation/IMPL_Pooled_Container_Scope_Safety.md; PR #67 follow‑up
 
 - [ ] Medium: Alignment handling assumes power‑of‑two; not validated
   - Location: MemoryArena::align_up (97–100); allocate(alignment) (63–74)
@@ -1156,10 +1163,11 @@ Acceptance for this PR iteration:
   - Details: 64MB per thread by default; many threads can consume significant RAM before reuse/reset.
   - Recommendation: Document knob and provide env/param override pattern in Phase 2.
 
-- [ ] High: Exceptions thrown in allocation paths violate no-exceptions-on-hot-paths
-  - Location: MemoryArena ctor (36–44; throw at 42); ArenaResource::do_allocate (114–121; throw at 117); TempBuffer (245–252; throw at 250)
-  - Details: Throwing std::bad_alloc in pool/arena paths used by k-means Elkan M-step and potentially kernel staging makes these code paths exceptionful; Vesper policy prohibits exceptions on hot paths.
-  - Web validation: Vesper Coding Standards — hot paths use std::expected; C++ pmr guidance allows throwing in do_allocate, but Vesper policy overrides for hot paths.
+- [x] High: Exceptions thrown in allocation paths violate no-exceptions-on-hot-paths — RESOLVED (Task 25)
+  - Location: MemoryArena ctor (throws unchanged but surfaced via prewarm); ArenaResource::do_allocate (throws preserved per PMR); TempBuffer (now has non-throwing try_create)
+  - Fix: Added ThreadLocalPool::prewarm(std::size_t) returning expected<void,error> for cold-path OOM detection; added debug-only allocation counters and hot-region markers; ArenaResource::do_allocate increments counters; TempBuffer<T>::try_create(count) returns expected<TempBuffer,error> on failure. Updated Doxygen warnings for hot-path usage.
+  - Tests: Added [memory_pool][noexcept_hot] cases for prewarm(), try_create() OOM path, and zero allocations within a presized hot loop (Debug-only instrumentation); all pass in Debug/Release.
+  - Notes: PMR throw contract preserved; zero runtime overhead in Release; backward compatibility maintained (throwing TempBuffer ctor unchanged).
   - Recommendation: Provide non-throwing variants returning std::expected or nullptr and require caller checks; reserve throw-based APIs for non-hot admin tooling; add noexcept to fast-path helpers.
 
 - [ ] Medium: TempBuffer alignment should honor alignof(T)

@@ -142,6 +142,14 @@ public:
      */
     auto encode(const float* data, std::size_t n, std::uint8_t* codes) const -> void;
 
+
+    /** \brief Encode with precondition validation.
+     *  \return Success or error (precondition_failed if untrained)
+     *  \see encode(), is_trained(), train(), import_pretrained()
+     */
+    auto encode_checked(const float* data, std::size_t n, std::uint8_t* codes) const
+        -> std::expected<void, core::error>;
+
     /** \brief Encode vectors into blocks.
      *
      * \param data Vectors to encode [n x dim]
@@ -167,6 +175,13 @@ public:
      * \see train(), import_pretrained(), is_trained(), decode_checked()
      */
     auto decode(const std::uint8_t* codes, std::size_t n, float* data) const -> void;
+
+    /** \brief Decode with precondition validation.
+     *  \return Success or error (precondition_failed if untrained)
+     *  \see decode(), is_trained(), train(), import_pretrained()
+     */
+    auto decode_checked(const std::uint8_t* codes, std::size_t n, float* data) const
+        -> std::expected<void, core::error>;
 
     /** \brief Compute distances using lookup tables (ADC).
      *

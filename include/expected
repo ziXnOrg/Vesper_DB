@@ -32,8 +32,8 @@ class expected {
   std::optional<E> err_{};
 public:
   // value constructors
-  constexpr expected(const T& v) : has_(true), val_(v) {}
-  constexpr expected(T&& v)      : has_(true), val_(std::move(v)) {}
+  constexpr expected(const T& v) : has_(true) { val_.emplace(v); }
+  constexpr expected(T&& v)      : has_(true) { val_.emplace(std::move(v)); }
 
   // from unexpected
   constexpr expected(const vesper_unexpected<E>& u) : has_(false), err_(u.error()) {}

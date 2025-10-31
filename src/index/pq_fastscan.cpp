@@ -9,6 +9,8 @@
 
 #include <atomic>
 #include <mutex>
+#include <optional>
+#include <cassert>
 
 namespace vesper::index {
 
@@ -27,16 +29,36 @@ auto FastScanPq::train(const float* data, std::size_t n, std::size_t dim)
 
     dsub_ = dim / config_.m;
 
+    if (n < static_cast<std::size_t>(ksub_)) {
+        return std::vesper_unexpected(core::error{
+            core::error_code::precondition_failed,
+            "Training requires n >= ksub (2^nbits)",
+            "pq_fastscan"
+        });
+    }
+
     // Allocate codebooks
     codebooks_ = std::make_unique<AlignedCentroidBuffer>(
         config_.m * ksub_, dsub_);
 
-    // Train each subquantizer independently
+    // Train each subquantizer independently and collect errors
+    // Thread-safety note: errs is pre-sized; each thread writes to a distinct index (sub_i).
+    // No reallocation occurs and elements are disjoint → no data race.
+
+    std::vector<std::optional<core::error>> errs(config_.m);
     #pragma omp parallel for schedule(dynamic)
-    for (int sub_i = 0; sub_i < static_cast<int>(config_.m)
-    ; ++sub_i) {
+    for (int sub_i = 0; sub_i < static_cast<int>(config_.m); ++sub_i) {
         const std::uint32_t sub = static_cast<std::uint32_t>(sub_i);
-        train_subquantizer(data, n, sub);
+        auto r = train_subquantizer(data, n, sub);
+        if (!r.has_value()) {
+            errs[sub] = r.error();
+        }
+    }
+
+    for (const auto& e : errs) {
+        if (e.has_value()) {
+            return std::vesper_unexpected(*e);
+        }
     }
 
     trained_ = true;
@@ -44,7 +66,7 @@ auto FastScanPq::train(const float* data, std::size_t n, std::size_t dim)
 }
 
 auto FastScanPq::train_subquantizer(const float* data, std::size_t n,
-                                    std::uint32_t sub_idx) -> void {
+                                    std::uint32_t sub_idx) -> std::expected<void, core::error> {
     // Extract subvector data
     std::vector<float> sub_data(n * dsub_);
 
@@ -65,14 +87,17 @@ auto FastScanPq::train_subquantizer(const float* data, std::size_t n,
 
     auto result = elkan.cluster(sub_data.data(), n, dsub_, kmeans_config);
 
-    if (result.has_value()) {
-        // Copy centroids to codebook
-        for (std::uint32_t code = 0; code < ksub_; ++code) {
-            const auto& centroid = result->centroids[code];
-            const std::uint32_t idx = sub_idx * ksub_ + code;
-            codebooks_->set_centroid(idx, centroid);
-        }
+    if (!result.has_value()) {
+        return std::vesper_unexpected(result.error());
     }
+
+    // Copy centroids to codebook
+    for (std::uint32_t code = 0; code < ksub_; ++code) {
+        const auto& centroid = result->centroids[code];
+        const std::uint32_t idx = sub_idx * ksub_ + code;
+        codebooks_->set_centroid(idx, centroid);
+    }
+    return {};
 }
 
 auto FastScanPq::find_nearest_code(const float* vec, std::uint32_t sub_idx) const

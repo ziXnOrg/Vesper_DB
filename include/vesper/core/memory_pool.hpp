@@ -19,7 +19,16 @@
 #include <vector>
 #include <atomic>
 #include <thread>
+#include <limits>
+#include <cassert>
+
 #include "vesper/platform/memory.hpp"
+#include "vesper/error.hpp"
+
+#ifndef NDEBUG
+namespace vesper::core::detail { inline void debug_mark_pool_allocation(std::size_t) noexcept; }
+#endif
+
 
 namespace vesper::core {
 
@@ -32,7 +41,7 @@ class MemoryArena {
 public:
     static constexpr std::size_t DEFAULT_SIZE = 64 * 1024 * 1024;  // 64MB
     static constexpr std::size_t ALIGNMENT = 64;  // Cache line size
-    
+
     explicit MemoryArena(std::size_t size = DEFAULT_SIZE)
         : size_(align_up(size, ALIGNMENT))
         , used_(0) {
@@ -42,14 +51,14 @@ public:
             throw std::bad_alloc();
         }
     }
-    
+
     ~MemoryArena() {
         vesper::platform::aligned_deallocate(buffer_);
     }
-    
+
     MemoryArena(const MemoryArena&) = delete;
     MemoryArena& operator=(const MemoryArena&) = delete;
-    
+
     MemoryArena(MemoryArena&& other) noexcept
         : buffer_(other.buffer_)
         , size_(other.size_)
@@ -58,47 +67,90 @@ public:
         other.size_ = 0;
         other.used_ = 0;
     }
-    
-    /** \brief Allocate memory from arena. */
-    [[nodiscard]] auto allocate(std::size_t bytes, 
+
+    /** \brief Allocate memory from arena (overflow-safe, no-throw hot path).
+     *  \param bytes [in] requested number of bytes (may be 0)
+     *  \param alignment [in] alignment in bytes; must be non-zero power-of-two (default 64)
+     *  \return pointer to aligned storage within the arena, or nullptr on failure
+     *  \pre alignment != 0 and is a power-of-two; bytes does not overflow when rounded up to alignment
+     *  \post On success, `used_` increases by the aligned byte count and remains \c <= size_. On failure, state is unchanged.
+     *  \thread_safety Not thread-safe. Intended for thread-local arenas only.
+     *  \complexity O(1)
+     *  \warning Returns nullptr on exhaustion, invalid alignment, or arithmetic overflow; never throws on this path.
+     */
+    [[nodiscard]] auto allocate(std::size_t bytes,
                                 std::size_t alignment = ALIGNMENT) -> void* {
-        bytes = align_up(bytes, alignment);
-        
-        const std::size_t offset = align_up(used_, alignment);
-        if (offset + bytes > size_) {
-            return nullptr;  // Arena exhausted
+        // Validate alignment: non-zero power-of-two
+        if (alignment == 0 || (alignment & (alignment - 1)) != 0) {
+            return nullptr;
         }
-        
+        const std::size_t mask = alignment - 1;
+
+        // Overflow-safe round-up of requested size
+        if (bytes != 0) {
+            const std::size_t maxv = (std::numeric_limits<std::size_t>::max)();
+            if (bytes > maxv - mask) {
+                return nullptr; // would overflow when aligning
+            }
+            bytes = (bytes + mask) & ~mask;
+        }
+
+        // Align absolute address (base + used_) to requested alignment (overflow-safe)
+        const auto base = reinterpret_cast<std::uintptr_t>(buffer_);
+        const std::size_t used = used_;
+        const auto maxp = (std::numeric_limits<std::uintptr_t>::max)();
+        // Defensive overflow guard per Vesper Security/Reliability policy: avoid UB in integer
+        // address arithmetic even if practically unreachable (used_ <= size_, base valid).
+        if (static_cast<std::uintptr_t>(used) > maxp - base) {
+            return nullptr; // would overflow computing current address
+        }
+        std::uintptr_t addr = base + static_cast<std::uintptr_t>(used);
+        // Defensive: aligning address could overflow on pathological inputs; fail closed.
+        if (addr > maxp - mask) {
+            return nullptr; // would overflow when aligning address
+        }
+        const std::uintptr_t aligned_addr = (addr + mask) & ~static_cast<std::uintptr_t>(mask);
+        const std::size_t offset = static_cast<std::size_t>(aligned_addr - base);
+
+        // Exhaustion check using subtraction to avoid overflow
+        if (offset > size_) {
+            return nullptr; // defensive: out-of-range offset
+        }
+        const std::size_t remaining = size_ - offset;
+        if (bytes > remaining) {
+            return nullptr; // Arena exhausted or would overflow used_
+        }
+
         used_ = offset + bytes;
         return buffer_ + offset;
     }
-    
+
     /** \brief Reset arena for reuse. */
     auto reset() noexcept -> void {
         used_ = 0;
     }
-    
+
     /** \brief Get bytes used. */
-    [[nodiscard]] auto used() const noexcept -> std::size_t { 
-        return used_; 
+    [[nodiscard]] auto used() const noexcept -> std::size_t {
+        return used_;
     }
-    
+
     /** \brief Get bytes available. */
-    [[nodiscard]] auto available() const noexcept -> std::size_t { 
-        return size_ - used_; 
+    [[nodiscard]] auto available() const noexcept -> std::size_t {
+        return size_ - used_;
     }
-    
+
     /** \brief Get total size. */
-    [[nodiscard]] auto size() const noexcept -> std::size_t { 
-        return size_; 
+    [[nodiscard]] auto size() const noexcept -> std::size_t {
+        return size_;
     }
-    
+
 private:
-    static constexpr auto align_up(std::size_t n, std::size_t alignment) noexcept 
+    static constexpr auto align_up(std::size_t n, std::size_t alignment) noexcept
         -> std::size_t {
         return (n + alignment - 1) & ~(alignment - 1);
     }
-    
+
     std::uint8_t* buffer_;
     std::size_t size_;
     std::size_t used_;
@@ -109,26 +161,33 @@ class ArenaResource : public std::pmr::memory_resource {
 public:
     explicit ArenaResource(MemoryArena* arena)
         : arena_(arena) {}
-    
+
 protected:
+    /**
+     * \brief Allocate memory (PMR contract - throws on failure).
+     * \warning Hot paths must pre-size containers to avoid reaching this on allocation failure.
+     */
     auto do_allocate(std::size_t bytes, std::size_t alignment) -> void* override {
         void* ptr = arena_->allocate(bytes, alignment);
         if (!ptr) {
             throw std::bad_alloc();
         }
+    #ifndef NDEBUG
+        detail::debug_mark_pool_allocation(bytes);
+    #endif
         return ptr;
     }
-    
-    auto do_deallocate(void* /* ptr */, std::size_t /* bytes */, 
+
+    auto do_deallocate(void* /* ptr */, std::size_t /* bytes */,
                       std::size_t /* alignment */) -> void override {
         // No-op: arena doesn't support individual deallocation
     }
-    
-    auto do_is_equal(const std::pmr::memory_resource& other) const noexcept 
+
+    auto do_is_equal(const std::pmr::memory_resource& other) const noexcept
         -> bool override {
         return this == &other;
     }
-    
+
 private:
     MemoryArena* arena_;
 };
@@ -144,92 +203,205 @@ public:
         thread_local ThreadLocalPool pool;
         return pool;
     }
-    
-    /** \brief Get PMR allocator for current thread. */
+    /** \brief Prewarm thread-local pool (cold path).
+     *  \param arena_size [in] Desired arena size for probe (bytes)
+     *  \return success or error::out_of_memory if probe/instantiation fails
+     *  \pre Call before entering hot loops; not thread-safe across threads
+     *  \post On success, thread-local pool exists and PMR is usable
+     *  \thread_safety One call per thread at startup or before hot paths
+     *  \warning Cold path only; do not call inside hot loops
+     */
+    static auto prewarm(std::size_t arena_size = MemoryArena::DEFAULT_SIZE) noexcept
+        -> std::expected<void, error> {
+        if (arena_size > 0) {
+            void* probe = vesper::platform::aligned_allocate(arena_size, MemoryArena::ALIGNMENT);
+            if (!probe) {
+                return std::vesper_unexpected(error{
+                    vesper::core::error_code::out_of_memory,
+                    "ThreadLocalPool::prewarm: probe allocation failed",
+                    "core.memory_pool"
+                });
+            }
+            vesper::platform::aligned_deallocate(probe);
+        }
+        try {
+            (void)instance();
+            return std::expected<void, error>{};
+        } catch (const std::bad_alloc&) {
+            return std::vesper_unexpected(error{
+                vesper::core::error_code::out_of_memory,
+                "ThreadLocalPool::prewarm: bad_alloc",
+                "core.memory_pool"
+            });
+        } catch (...) {
+            return std::vesper_unexpected(error{
+                vesper::core::error_code::internal,
+                "ThreadLocalPool::prewarm: unexpected exception",
+                "core.memory_pool"
+            });
+        }
+    }
+
+#ifndef NDEBUG
+    // Debug instrumentation for hot-path allocation tracking
+    auto debug_begin_hot_region() noexcept -> void { in_hot_region_ = true; hot_region_alloc_calls_ = 0; }
+    [[nodiscard]] auto debug_end_hot_region() noexcept -> std::size_t { in_hot_region_ = false; return hot_region_alloc_calls_; }
+    [[nodiscard]] auto debug_alloc_calls() const noexcept -> std::size_t { return alloc_calls_; }
+    [[nodiscard]] auto debug_bytes_allocated() const noexcept -> std::size_t { return bytes_allocated_; }
+    auto debug_mark_allocation(std::size_t bytes) noexcept -> void { ++alloc_calls_; bytes_allocated_ += bytes; if (in_hot_region_) { ++hot_region_alloc_calls_; } }
+#endif
+
+
+    /** \brief Get PMR allocator for the current thread.
+     *  \pre Must be used on the same thread that owns this ThreadLocalPool.
+     *  \post Returned allocator's allocations are backed by the thread-local arena and will be invalidated when the pool is reset (e.g., at PoolScope destruction).
+     *  \thread_safety Not safe to share across threads; obtain per-thread allocators via instance().
+     *  \warning Lifetime of allocations is scope-bounded by PoolScope; do not let pmr containers escape that scope.
+     *  \see PoolScope, make_pooled_vector
+     */
     [[nodiscard]] auto allocator() -> std::pmr::polymorphic_allocator<std::byte> {
         return std::pmr::polymorphic_allocator<std::byte>(&resource_);
     }
-    
+
     /** \brief Allocate memory. */
-    [[nodiscard]] auto allocate(std::size_t bytes, 
+    [[nodiscard]] auto allocate(std::size_t bytes,
                                 std::size_t alignment = 64) -> void* {
-        return arena_.allocate(bytes, alignment);
+        void* p = arena_.allocate(bytes, alignment);
+    #ifndef NDEBUG
+        if (p) { debug_mark_allocation(bytes); }
+    #endif
+        return p;
     }
-    
+
     /** \brief Reset pool (deallocate all). */
     auto reset() -> void {
         arena_.reset();
     }
-    
+
     /** \brief Get usage statistics. */
     struct Stats {
         std::size_t bytes_used;
         std::size_t bytes_total;
         float usage_ratio;
     };
-    
+
     [[nodiscard]] auto stats() const -> Stats {
+
         return Stats{
             .bytes_used = arena_.used(),
             .bytes_total = arena_.size(),
-            .usage_ratio = static_cast<float>(arena_.used()) / 
+            .usage_ratio = static_cast<float>(arena_.used()) /
                           static_cast<float>(arena_.size())
         };
     }
-    
+#ifndef NDEBUG
+    // Debug-only: track nesting of PoolScope on this thread to prevent misuse.
+    auto debug_scope_enter() noexcept -> void { ++scope_depth_; }
+    auto debug_scope_exit() noexcept -> void { --scope_depth_; }
+    [[nodiscard]] auto debug_scope_depth() const noexcept -> int { return scope_depth_; }
+#endif
+
+
 private:
-    ThreadLocalPool() 
+    ThreadLocalPool()
         : arena_(MemoryArena::DEFAULT_SIZE)
         , resource_(&arena_) {
         register_thread();
     }
-    
+
     ~ThreadLocalPool() {
         unregister_thread();
     }
-    
+
     auto register_thread() -> void {
         active_threads_.fetch_add(1, std::memory_order_relaxed);
     }
-    
+
     auto unregister_thread() -> void {
         active_threads_.fetch_sub(1, std::memory_order_relaxed);
     }
-    
+
     MemoryArena arena_;
     ArenaResource resource_;
-    
-    inline static std::atomic<std::uint32_t> active_threads_{0};
-};
 
-/** \brief RAII scope guard for pool lifetime. */
+#ifndef NDEBUG
+    int scope_depth_{0};
+#endif
+
+    inline static std::atomic<std::uint32_t> active_threads_{0};
+#ifndef NDEBUG
+    std::size_t alloc_calls_{0};
+    std::size_t bytes_allocated_{0};
+    std::size_t hot_region_alloc_calls_{0};
+    bool in_hot_region_{false};
+#endif
+
+};
+#ifndef NDEBUG
+namespace detail {
+inline void debug_mark_pool_allocation(std::size_t bytes) noexcept {
+    ThreadLocalPool::instance().debug_mark_allocation(bytes);
+}
+}
+#endif
+
+
+
+/** \brief RAII scope guard for pooled allocations.
+ *  \pre All pooled allocations and pmr containers created within this scope MUST NOT escape it.
+ *  \post On destruction, the underlying pool is reset; all pool-backed storage becomes invalid.
+ *  \thread_safety Not thread-safe across threads; use per-thread scopes.
+ *  \warning Do not return/move PooledVector or any pmr container using ThreadLocalPool out of this scope.
+ *  \see ThreadLocalPool::allocator, make_pooled_vector
+ */
 class PoolScope {
 public:
-    PoolScope() : pool_(ThreadLocalPool::instance()) {}
-    
+    PoolScope() : pool_(ThreadLocalPool::instance()) {
+#ifndef NDEBUG
+        pool_.debug_scope_enter();
+#endif
+    }
+
     ~PoolScope() {
         pool_.reset();
+#ifndef NDEBUG
+        pool_.debug_scope_exit();
+#endif
     }
-    
+
     PoolScope(const PoolScope&) = delete;
     PoolScope& operator=(const PoolScope&) = delete;
-    
+
     /** \brief Get allocator for this scope. */
     [[nodiscard]] auto allocator() -> std::pmr::polymorphic_allocator<std::byte> {
         return pool_.allocator();
     }
-    
+
 private:
     ThreadLocalPool& pool_;
 };
 
-/** \brief Pooled vector using thread-local allocation. */
+/** \brief Pooled vector using thread-local allocation.
+ *  \note This is an alias to std::pmr::vector<T> using ThreadLocalPool as upstream resource.
+ *  \warning Lifetime of the underlying storage is bounded by the active PoolScope; do not let the container escape that scope.
+ *  \see PoolScope, ThreadLocalPool::allocator, make_pooled_vector
+ */
 template<typename T>
 using PooledVector = std::pmr::vector<T>;
 
-/** \brief Create pooled vector in current thread's pool. */
+/** \brief Create pooled vector in the current thread's pool.
+ *  \pre Must be called with an active PoolScope on the current thread.
+ *  \post Returned container's storage is allocated from ThreadLocalPool and is invalidated at PoolScope destruction.
+ *  \thread_safety Not safe across threads.
+ *  \warning Do not return/move the returned container past the lifetime of the PoolScope.
+ *  \see PoolScope, ThreadLocalPool::allocator
+ */
 template<typename T>
 [[nodiscard]] auto make_pooled_vector(std::size_t size = 0) -> PooledVector<T> {
+#ifndef NDEBUG
+    assert(ThreadLocalPool::instance().debug_scope_depth() > 0 &&
+           "make_pooled_vector must be used within a core::PoolScope");
+#endif
     auto& pool = ThreadLocalPool::instance();
     PooledVector<T> vec(pool.allocator());
     if (size > 0) {
@@ -242,6 +414,11 @@ template<typename T>
 template<typename T>
 class TempBuffer {
 public:
+    /** \brief Construct TempBuffer (throws on OOM).
+     *  \warning Throws std::bad_alloc on allocation failure; avoid in hot paths. Use try_create() for non-throwing construction.
+     *  \see try_create
+     */
+
     explicit TempBuffer(std::size_t count)
         : pool_(ThreadLocalPool::instance())
         , ptr_(static_cast<T*>(pool_.allocate(count * sizeof(T))))
@@ -250,29 +427,56 @@ public:
             throw std::bad_alloc();
         }
     }
-    
+
     ~TempBuffer() = default;
-    
+
+    /** \brief Create TempBuffer without throwing (cold-path/preflight).
+     *  \param count [in] number of elements
+     *  \return TempBuffer on success or error::out_of_memory on failure
+     *  \warning Prefer this over the throwing constructor for hot-path preflights.
+     */
+    static auto try_create(std::size_t count) noexcept
+        -> std::expected<TempBuffer<T>, error> {
+        auto& pool = ThreadLocalPool::instance();
+        T* ptr = static_cast<T*>(pool.allocate(count * sizeof(T)));
+        if (!ptr) {
+            return std::vesper_unexpected(error{
+                vesper::core::error_code::out_of_memory,
+                "TempBuffer allocation failed",
+                "core.memory_pool"
+            });
+        }
+        return TempBuffer<T>(pool, ptr, count);
+    }
+
+    TempBuffer(TempBuffer&&) noexcept = default;
+    TempBuffer& operator=(TempBuffer&&) noexcept = default;
     TempBuffer(const TempBuffer&) = delete;
     TempBuffer& operator=(const TempBuffer&) = delete;
-    
+private:
+
+    // Private constructor used by try_create()
+    TempBuffer(ThreadLocalPool& pool, T* ptr, std::size_t count) noexcept
+        : pool_(pool), ptr_(ptr), size_(count) {}
+
+public:
     [[nodiscard]] auto data() noexcept -> T* { return ptr_; }
     [[nodiscard]] auto data() const noexcept -> const T* { return ptr_; }
     [[nodiscard]] auto size() const noexcept -> std::size_t { return size_; }
-    
+
     [[nodiscard]] auto operator[](std::size_t i) noexcept -> T& {
         return ptr_[i];
     }
-    
+
     [[nodiscard]] auto operator[](std::size_t i) const noexcept -> const T& {
         return ptr_[i];
     }
-    
+
     [[nodiscard]] auto begin() noexcept -> T* { return ptr_; }
     [[nodiscard]] auto end() noexcept -> T* { return ptr_ + size_; }
     [[nodiscard]] auto begin() const noexcept -> const T* { return ptr_; }
     [[nodiscard]] auto end() const noexcept -> const T* { return ptr_ + size_; }
-    
+
 private:
     ThreadLocalPool& pool_;
     T* ptr_;
